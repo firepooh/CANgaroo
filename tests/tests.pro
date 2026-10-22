@@ -17,4 +17,5 @@ SUBDIRS += \
     autosar_e2e \
     ldf_parser \
     slcan_codec \
+    candle_error_frame \
     measurement_setup

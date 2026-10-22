@@ -47,6 +47,7 @@ shared config; `tests/support/LogStub.cpp` satisfies `core/Log` without `Backend
 | `autosar_e2e/`        | E2E Profile 2 CRC-8H2F |
 | `ldf_parser/`         | LIN Description File parsing |
 | `slcan_codec/`        | SLCAN ASCII frame decoding, incl. malformed input |
+| `candle_error_frame/` | gs_usb / Candlelight 2.5 error frames to `BusError` flags, legacy and ElmueSoft (from `linux/can/error.h` + Elmue firmware) |
 
 **Expected values come from outside cangaroo.** The big-endian bug in issue #34
 survived because extract and inject were wrong in mutually cancelling ways, so

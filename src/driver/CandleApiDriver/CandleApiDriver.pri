@@ -18,6 +18,7 @@ HEADERS += \
     $$PWD/api/candle.h \
     $$PWD/CandleApiDriver.h \
     $$PWD/CandleApiInterface.h \
+    $$PWD/CandleErrorFrame.h \
     $$PWD/CandleSharedDevice.h \
     $$PWD/api/candle_ctrl_req.h \
     $$PWD/api/candle_elmue.h \

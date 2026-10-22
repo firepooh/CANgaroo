@@ -19,6 +19,7 @@
 
 #include "CandleApiInterface.h"
 #include "CandleApiDriver.h"
+#include "CandleErrorFrame.h"
 
 #include <QDateTime>
 #include <QMutexLocker>
@@ -835,29 +836,14 @@ bool CandleApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int ti
         // decode it as one.
         msg.setId(0);
         msg.setExtended(false);
-        if (errId & 0x00000001) msg.setErrorFlag(BusError::TxTimeout);
-        if (errId & 0x00000020) msg.setErrorFlag(BusError::Ack);
-        if (errId & 0x00000040) msg.setErrorFlag(BusError::BusOff);
-        if (errId & 0x00000100) msg.setErrorFlag(BusError::Restarted);
-        if (errId & 0x00000004) {
-            if (d[1] & 0x03) msg.setErrorFlag(BusError::Overrun);
-            // Elmue Candlelight 2.5 reports a lost frame (e.g. APP_UsbInOverflow)
-            // this way instead of CANDLE_FRAME_FLAG_OVERFLOW
-            if (d[1] & 0x01) _numRxOverruns++;
-            if (d[1] & 0x0C) msg.setErrorFlag(BusError::ErrorWarning);
-            if (d[1] & 0x30) msg.setErrorFlag(BusError::ErrorPassive);
-            if (d[1] & 0x40) msg.setErrorFlag(BusError::ErrorActive);
-        }
-        if (errId & 0x00000008) {
-            const uint8_t prot = d[2];
-            if (prot & 0x01) msg.setErrorFlag(BusError::Bit);
-            if (prot & 0x02) msg.setErrorFlag(BusError::Form);
-            if (prot & 0x04) msg.setErrorFlag(BusError::Stuff);
-            if (prot & 0x18) msg.setErrorFlag(BusError::Bit);
-            if (d[3] == 0x08) msg.setErrorFlag(BusError::Crc);
-        }
-        // CAN_ERR_BUSERROR (0x80) or anything unclassified
-        if (!msg.isErrorFrame()) msg.setErrorFlag(BusError::Generic);
+        // Over the ElmueSoft protocol Candlelight 2.5 leaves the controller /
+        // protocol classes out of the ID; data[1], data[2] and data[5] are
+        // always valid there (see CandleErrorFrame.h).
+        const CandleErrorFrame err = candleDecodeErrorFrame(errId, d, _elmue);
+        msg.setErrorFlags(err.flags);
+        // Lost received frames (legacy RX overflow, Elmue APP_CanRxFail /
+        // APP_UsbInOverflow) arrive as error frames, not CANDLE_FRAME_FLAG_OVERFLOW
+        if (err.rxLost) _numRxOverruns++;
     }
     msg.setRTR(candle_fd_frame_is_rtr(&frame));
 
