@@ -42,7 +42,11 @@
 #include "candle.h"
 
 #define CANDLE_MAX_DEVICES 32
-#define CANDLE_URB_COUNT 30
+/* Outstanding USB IN requests. Legacy gs_usb firmware sends one frame per
+ * transfer, so this is also how many frames the host controller can take
+ * while the reader thread is not scheduled: 256 = 60 ms at a saturated
+ * 500 kbit/s bus (~4300 frames/s). 30 (7 ms) lost frames on a busy PC. */
+#define CANDLE_URB_COUNT 256
 
 #pragma pack(push,1)
 
