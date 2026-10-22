@@ -102,6 +102,17 @@ typedef struct {
      * size, so a full-speed device gets 128 bytes per URB instead of 512. */
     uint8_t *rx_buf;
     DWORD rx_buf_size;
+
+    /* ElmueSoft protocol (candle_elmue.c): capable = decided at open,
+     * active = enabled by the running channel start. */
+    bool elmue_capable;
+    bool elmue_active;
+    bool elmue_timestamps;
+    uint8_t elmue_busload;
+    uint8_t elmue_rx[2048];     /* the last USB IN transfer, being parsed */
+    DWORD elmue_rx_len;
+    DWORD elmue_rx_off;
+    int elmue_rx_left;          /* messages left in elmue_rx */
 } candle_device_t;
 
 typedef struct {

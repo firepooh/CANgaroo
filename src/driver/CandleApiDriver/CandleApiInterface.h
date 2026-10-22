@@ -105,7 +105,13 @@ private:
     static constexpr int MaxPendingTx = 256;
     QMutex _txMutex;
     QList<BusMessage> _pendingTx;
+    QList<uint8_t> _pendingMarkers;   // same index as _pendingTx; 0 = legacy (match by content)
 
+    // ElmueSoft protocol (see api/candle_elmue.h): echoes are matched by marker
+    bool _elmue = false;
+    uint8_t _nextMarker = 1;
+
+    void addPendingTx(const BusMessage &txMsg, uint8_t marker);   // _txMutex held
     bool takeConfirmedTx(const candle_fd_frame_t &echo, BusMessage &txMsg);
 };
 

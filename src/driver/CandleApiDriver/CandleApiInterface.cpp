@@ -270,7 +270,8 @@ QString CandleApiInterface::getName() const
 QString CandleApiInterface::getDetailsStr() const
 {
     return _sharedDev->productName + " ch" + QString::number(_channel)
-           + " | " + QString::fromStdWString(getPath());
+           + " | " + QString::fromStdWString(getPath())
+           + (_isOpen ? (_elmue ? " | USB protocol ElmueSoft" : " | USB protocol legacy") : "");
 }
 
 uint8_t CandleApiInterface::getChannel() const
@@ -548,6 +549,7 @@ void CandleApiInterface::open()
         // Starting the channel discards anything still queued on the device
         QMutexLocker lock(&_txMutex);
         _pendingTx.clear();
+        _pendingMarkers.clear();
     }
 
     if (!candle_channel_start(_sharedDev->handle, _channel, flags)) {
@@ -560,6 +562,10 @@ void CandleApiInterface::open()
         _isOpen = false;
         return;
     }
+
+    _elmue = candle_dev_elmue_active(_sharedDev->handle);
+    log_info(tr("CandleApi: %1 uses the %2 USB protocol")
+        .arg(getName(), _elmue ? "ElmueSoft (blobs, TX echo on ACK)" : "legacy gs_usb"));
 
     if (firstOpen) {
         uint32_t t_dev = 0;
@@ -594,6 +600,7 @@ void CandleApiInterface::close()
         // Stopping the channel discards frames the device has not sent yet
         QMutexLocker lock(&_txMutex);
         _pendingTx.clear();
+        _pendingMarkers.clear();
     }
 
     QMutexLocker devLock(&_sharedDev->openMutex);
@@ -620,8 +627,23 @@ void CandleApiInterface::sendMessage(const BusMessage &msg)
 
     bool ok = false;
 
+    BusMessage txMsg = msg;
+    txMsg.setFD(_isFdEnabled && (msg.isFD() || msg.getLength() > 8));
+    txMsg.setRX(false);
+
+    // ElmueSoft protocol: the echo only carries this marker and can arrive
+    // before the write returns, so the frame is pending before it is sent.
+    uint8_t marker = 0;
+    if (_elmue) {
+        QMutexLocker lock(&_txMutex);
+        marker = _nextMarker;
+        _nextMarker = (_nextMarker == 255) ? 1 : _nextMarker + 1;
+        addPendingTx(txMsg, marker);
+    }
+
     if (_isFdEnabled && (msg.isFD() || msg.getLength() > 8)) {
         candle_fd_frame_t frame{};
+        frame.echo_id = marker;
 
         frame.can_id = msg.getId();
         if (msg.isExtended()) {
@@ -642,6 +664,7 @@ void CandleApiInterface::sendMessage(const BusMessage &msg)
         ok = candle_fd_frame_send(_sharedDev->handle, _channel, &frame);
     } else {
         candle_frame_t frame{};
+        frame.echo_id = marker;
 
         frame.can_id = msg.getId();
         if (msg.isExtended()) {
@@ -663,26 +686,53 @@ void CandleApiInterface::sendMessage(const BusMessage &msg)
     _sharedDev->writeMutex.unlock();
 
     if (ok) {
-        // Not shown yet: the device echoes the frame once it has actually been
-        // transmitted (see readMessage()), so a frame that never makes it onto
-        // the bus (e.g. no ACK with the cable unplugged) never appears as TX.
-        BusMessage txMsg = msg;
-        txMsg.setFD(_isFdEnabled && (msg.isFD() || msg.getLength() > 8));
-        txMsg.setRX(false);
-        QMutexLocker lock(&_txMutex);
-        if (_pendingTx.size() >= MaxPendingTx) {
-            // The device stopped echoing (e.g. channel reset): drop the oldest.
-            _pendingTx.removeFirst();
-            _numTxErr++;
+        // Not shown yet: the device echoes the frame once it has been handed
+        // to the bus (see readMessage()). With the ElmueSoft protocol that is
+        // after the ACK; the legacy firmware echoes as soon as the frame is in
+        // its TX FIFO, so there a frame without ACK still appears as TX.
+        if (!_elmue) {
+            QMutexLocker lock(&_txMutex);
+            addPendingTx(txMsg, 0);
         }
-        _pendingTx.append(txMsg);
     } else {
         _numTxErr++;
+        if (_elmue) {
+            QMutexLocker lock(&_txMutex);
+            const int i = _pendingMarkers.lastIndexOf(marker);
+            if (i >= 0) {
+                _pendingTx.removeAt(i);
+                _pendingMarkers.removeAt(i);
+            }
+        }
     }
+}
+
+void CandleApiInterface::addPendingTx(const BusMessage &txMsg, uint8_t marker)
+{
+    if (_pendingTx.size() >= MaxPendingTx) {
+        // The device stopped echoing (e.g. channel reset): drop the oldest.
+        _pendingTx.removeFirst();
+        _pendingMarkers.removeFirst();
+        _numTxErr++;
+    }
+    _pendingTx.append(txMsg);
+    _pendingMarkers.append(marker);
 }
 
 bool CandleApiInterface::takeConfirmedTx(const candle_fd_frame_t &echo, BusMessage &txMsg)
 {
+    if (_elmue) {
+        // The echo carries no frame content, only the marker we sent.
+        QMutexLocker lock(&_txMutex);
+        const int i = _pendingMarkers.indexOf(static_cast<uint8_t>(echo.echo_id));
+        if (i < 0) {
+            return false;
+        }
+        txMsg = _pendingTx.takeAt(i);
+        _pendingMarkers.removeAt(i);
+        return true;
+    }
+
     const bool echoFd = (echo.flags & CANDLE_FRAME_FLAG_FD) != 0;
     const uint8_t echoDlc = echoFd ? echo.can_dlc : std::min(echo.can_dlc, static_cast<uint8_t>(8u));
     const uint32_t echoId = echo.can_id & 0x1FFFFFFFu;
@@ -716,6 +766,7 @@ bool CandleApiInterface::takeConfirmedTx(const candle_fd_frame_t &echo, BusMessa
 
         txMsg = p;
         _pendingTx.removeAt(i);
+        _pendingMarkers.removeAt(i);
         return true;
     }
     return false;
@@ -782,6 +833,9 @@ bool CandleApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int ti
         if (errId & 0x00000100) msg.setErrorFlag(BusError::Restarted);
         if (errId & 0x00000004) {
             if (d[1] & 0x03) msg.setErrorFlag(BusError::Overrun);
+            // Elmue Candlelight 2.5 reports a lost frame (e.g. APP_UsbInOverflow)
+            // this way instead of CANDLE_FRAME_FLAG_OVERFLOW
+            if (d[1] & 0x01) _numRxOverruns++;
             if (d[1] & 0x0C) msg.setErrorFlag(BusError::ErrorWarning);
             if (d[1] & 0x30) msg.setErrorFlag(BusError::ErrorPassive);
             if (d[1] & 0x40) msg.setErrorFlag(BusError::ErrorActive);

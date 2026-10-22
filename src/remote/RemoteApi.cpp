@@ -248,6 +248,7 @@ QJsonObject RemoteApi::interfaceToJson(BusInterfaceId id)
         o["bus_type"]     = intf->busType() == BusType::LIN ? "LIN" : "CAN";
         o["state"]        = stateName(intf->getState());
         o["capabilities"] = capabilityNames(intf->getCapabilities());
+        o["details"]      = intf->getDetailsStr();
 
         std::set<unsigned> bitrates, fdBitrates, samplePoints;
         for (CanTiming t : intf->getAvailableBitrates())

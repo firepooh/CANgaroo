@@ -27,6 +27,7 @@
 
 #include "candle_defs.h"
 #include "candle_ctrl_req.h"
+#include "candle_elmue.h"
 #include "ch_9.h"
 
 static bool candle_dev_interal_open(candle_handle hdev);
@@ -505,6 +506,10 @@ static bool candle_dev_interal_open(candle_handle hdev)
         }
     }
 
+    dev->elmue_capable = candle_elmue_supported(dev);
+    dev->elmue_active = false;
+    candle_logf(L"elmue protocol %ls", dev->elmue_capable ? L"supported" : L"not used");
+
     /* Pre-allocate a manual-reset event for timed overlapped writes.  Reusing
      * one event per device (writes are serialised by writeMutex) avoids
      * per-frame CreateEvent overhead at high CAN frame rates. */
@@ -651,7 +656,8 @@ static bool candle_close_rxurbs(candle_device_t *dev)
 static bool candle_alloc_rxurbs(candle_device_t *dev)
 {
     const DWORD max_packet = dev->bulkInMaxPacket ? dev->bulkInMaxPacket : 64;
-    const DWORD frame_size = sizeof(candle_fd_frame_t);
+    /* an ElmueSoft blob can fill a whole 2 KB transfer */
+    const DWORD frame_size = dev->elmue_capable ? CANDLE_ELMUE_MAX_TRANSFER : sizeof(candle_fd_frame_t);
 
     dev->rx_buf_size = ((frame_size + max_packet - 1) / max_packet) * max_packet;
     dev->rx_buf = (uint8_t *)malloc((size_t)dev->rx_buf_size * CANDLE_URB_COUNT);
@@ -883,12 +889,20 @@ bool __stdcall DLL candle_channel_start(candle_handle hdev, uint8_t ch, uint32_t
         candle_logf(L"channel %u has no HW timestamp capability; starting without timestamp flag", ch);
     }
 
+    if (dev->elmue_capable) {
+        flags |= CANDLE_ELMUE_FLAG_PROTOCOL | CANDLE_ELMUE_FLAG_BLOBS;
+    }
+
     bool rc = candle_ctrl_set_device_mode(dev, ch, CANDLE_DEVMODE_START, flags);
     candle_logf(L"channel %u start flags=0x%08x result=%u err=%u",
                 ch,
                 flags,
                 rc ? 1 : 0,
                 dev->last_error);
+
+    dev->elmue_active = rc && dev->elmue_capable;
+    dev->elmue_timestamps = (flags & CANDLE_MODE_HW_TIMESTAMP) != 0;
+    dev->elmue_rx_left = 0;
     return rc;
 }
 
@@ -896,7 +910,15 @@ bool __stdcall DLL candle_channel_stop(candle_handle hdev, uint8_t ch)
 {
     // TODO ensure device is open, check channel count..
     candle_device_t *dev = (candle_device_t*)hdev;
+    dev->elmue_active = false;
+    dev->elmue_rx_left = 0;
     return candle_ctrl_set_device_mode(dev, ch, CANDLE_DEVMODE_RESET, 0);
+}
+
+bool __stdcall DLL candle_dev_elmue_active(candle_handle hdev)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+    return dev->elmue_active;
 }
 
 /* Write len bytes from buf to the OUT pipe, aborting after 300 ms.
@@ -931,9 +953,29 @@ static bool candle_write_pipe_timed(candle_device_t *dev, uint8_t *buf, DWORD le
     return WinUsb_GetOverlappedResult(dev->winUSBHandle, &ovl, &transferred, FALSE) != FALSE;
 }
 
+/* ElmueSoft protocol: frame->echo_id carries the one-byte TX marker. */
+static bool candle_elmue_send(candle_device_t *dev, const candle_fd_frame_t *frame, bool fd)
+{
+    uint8_t buf[8 + 64];
+    const DWORD len = candle_elmue_build_tx(frame, fd, buf);
+    bool rc = candle_write_pipe_timed(dev, buf, len);
+    dev->last_error = rc ? CANDLE_ERR_OK : CANDLE_ERR_SEND_FRAME;
+    return rc;
+}
+
 bool __stdcall DLL candle_frame_send(candle_handle hdev, uint8_t ch, candle_frame_t *frame)
 {
     candle_device_t *dev = (candle_device_t*)hdev;
+    if (dev->elmue_active) {
+        candle_fd_frame_t fd_frame;
+        memset(&fd_frame, 0, sizeof(fd_frame));
+        fd_frame.echo_id = frame->echo_id;
+        fd_frame.can_id = frame->can_id;
+        fd_frame.can_dlc = frame->can_dlc;
+        fd_frame.flags = frame->flags;
+        memcpy(fd_frame.data, frame->data, sizeof(frame->data));
+        return candle_elmue_send(dev, &fd_frame, false);
+    }
     frame->echo_id = 0;
     frame->channel = ch;
     bool rc = candle_write_pipe_timed(dev, (uint8_t*)frame, sizeof(*frame));
@@ -1048,6 +1090,9 @@ bool __stdcall DLL candle_channel_set_data_timing(candle_handle hdev, uint8_t ch
 bool __stdcall DLL candle_fd_frame_send(candle_handle hdev, uint8_t ch, candle_fd_frame_t *frame)
 {
     candle_device_t *dev = (candle_device_t*)hdev;
+    if (dev->elmue_active) {
+        return candle_elmue_send(dev, frame, (frame->flags & CANDLE_FRAME_FLAG_FD) != 0);
+    }
     frame->echo_id = 0;
     frame->channel = ch;
     bool rc = candle_write_pipe_timed(dev, (uint8_t*)frame, sizeof(*frame));
@@ -1058,6 +1103,12 @@ bool __stdcall DLL candle_fd_frame_send(candle_handle hdev, uint8_t ch, candle_f
 bool __stdcall DLL candle_fd_frame_read(candle_handle hdev, candle_fd_frame_t *frame, uint32_t timeout_ms)
 {
     candle_device_t *dev = (candle_device_t*)hdev;
+
+    /* ElmueSoft blob: hand out the frames left from the last transfer first */
+    if (dev->elmue_active && candle_elmue_next_frame(dev, frame)) {
+        dev->last_error = CANDLE_ERR_OK;
+        return true;
+    }
 
     DWORD urb_num;
     if (!candle_wait_next_urb(dev, timeout_ms, &urb_num)) {
@@ -1080,6 +1131,20 @@ bool __stdcall DLL candle_fd_frame_read(candle_handle hdev, candle_fd_frame_t *f
     }
     dev->rxurbs[urb_num].pending = false;
     candle_advance_urb(dev, urb_num);
+
+    if (dev->elmue_active) {
+        /* Copy the transfer out and queue the URB again right away, so the
+         * host controller keeps reading while the messages are handed out. */
+        candle_elmue_load(dev, dev->rxurbs[urb_num].buf, bytes_transfered);
+        candle_prepare_read(dev, urb_num);
+        if (candle_elmue_next_frame(dev, frame)) {
+            dev->last_error = CANDLE_ERR_OK;
+            return true;
+        }
+        /* zero length packet, string or bus load message only */
+        dev->last_error = CANDLE_ERR_READ_TIMEOUT;
+        return false;
+    }
 
     /* Minimum: classic CAN header (12 bytes) + at least 8 data bytes = 20 bytes */
     static const DWORD classic_min = sizeof(candle_frame_t) - 4;

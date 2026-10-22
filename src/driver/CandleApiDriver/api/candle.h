@@ -258,6 +258,10 @@ bool __stdcall DLL candle_dev_get_state(candle_handle hdev, candle_devstate_t *s
 wchar_t __stdcall DLL *candle_dev_get_path(candle_handle hdev);
 bool __stdcall DLL candle_dev_open(candle_handle hdev);
 bool __stdcall DLL candle_dev_get_timestamp_us(candle_handle hdev, uint32_t *timestamp_us);
+
+/* True while a started channel uses the ElmueSoft protocol (candle_elmue.h).
+ * Then TX echoes carry the marker the sender put into echo_id (1..255). */
+bool __stdcall DLL candle_dev_elmue_active(candle_handle hdev);
 bool __stdcall DLL candle_dev_close(candle_handle hdev);
 bool __stdcall DLL candle_dev_free(candle_handle hdev);
 
