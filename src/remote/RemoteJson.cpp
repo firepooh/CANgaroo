@@ -101,8 +101,10 @@ QString RemoteJson::toString(const QJsonObject &obj, const QString &key)
 
 BusMessage RemoteJson::frameFromJson(const QJsonObject &obj)
 {
+    // Frames built from client parameters are meant to be sent.
     BusMessage msg;
     msg.setBusType(BusType::CAN);
+    msg.setRX(false);
 
     const bool extended = toBool(obj, "extended", false);
     const uint32_t id = toUInt(obj, "id", extended ? 0x1FFFFFFF : 0x7FF);
