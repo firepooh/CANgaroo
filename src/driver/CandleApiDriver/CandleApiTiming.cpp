@@ -8,7 +8,11 @@ CandleApiTiming::CandleApiTiming(uint32_t baseClk, uint32_t bitrate, uint32_t sa
     _timing.brp = brp;
     _timing.phase_seg1 = phase_seg1;
     _timing.phase_seg2 = phase_seg2;
-    _timing.sjw = 1;
+    // SJW = phase_seg2, i.e. min(seg1, seg2) as recommended by the Elmue
+    // Candlelight 2.5 manual. 1 tq leaves almost no room to resynchronize
+    // (6.25 ns in a 5 Mbit/s data phase). setBitTiming() limits it to the
+    // device's sjw_max.
+    _timing.sjw = phase_seg2;
     _timing.prop_seg = 1;
 }
 

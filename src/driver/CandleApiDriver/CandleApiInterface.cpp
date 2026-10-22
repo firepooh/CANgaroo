@@ -69,6 +69,9 @@ CandleApiInterface::CandleApiInterface(CandleApiDriver *driver,
         << CandleApiTiming(160000000,  125000, 875,  8, 138, 20)
         << CandleApiTiming(160000000,  250000, 875,  4, 138, 20)
         << CandleApiTiming(160000000,  500000, 875,  2, 138, 20)
+        // CAN FD: all nodes need the same nominal sample point, the data bit
+        // rate switches at the BRS sample point (80 % is the CiA 601 value).
+        << CandleApiTiming(160000000,  500000, 800,  2, 126, 32)
         << CandleApiTiming(160000000, 1000000, 875,  1, 138, 20);
 
     _timings
@@ -220,9 +223,12 @@ CandleApiInterface::CandleApiInterface(CandleApiDriver *driver,
     _fdTimings
         << CandleApiTiming(160000000,  1000000, 800,  4, 30,  8)  //  160M/(4*40)  = 1M,  SP=80.0%
         << CandleApiTiming(160000000,  2000000, 800,  2, 30,  8)  //  160M/(2*40)  = 2M,  SP=80.0%
-        << CandleApiTiming(160000000,  4000000, 800,  1, 30,  8)  //  160M/(1*40)  = 4M,  SP=80.0%
-        << CandleApiTiming(160000000,  5000000, 812,  1, 24,  6)  //  160M/(1*32)  = 5M,  SP=81.25%
-        << CandleApiTiming(160000000,  8000000, 800,  1, 14,  4); //  160M/(1*20)  = 8M,  SP=80.0%
+        // 4M..8M use prescaler 2 like the nominal 500k entry: ST and the Elmue
+        // manual recommend the same prescaler for nominal and data phase, the
+        // bit rate switches at the BRS sample point.
+        << CandleApiTiming(160000000,  4000000, 800,  2, 14,  4)  //  160M/(2*20)  = 4M,  SP=80.0%
+        << CandleApiTiming(160000000,  5000000, 812,  2, 11,  3)  //  160M/(2*16)  = 5M,  SP=81.25%
+        << CandleApiTiming(160000000,  8000000, 800,  2,  6,  2); //  160M/(2*10)  = 8M,  SP=80.0%
 
     // 80 MHz (CANnectivity)
     _fdTimings
@@ -378,6 +384,9 @@ bool CandleApiInterface::setBitTiming(uint32_t bitrate, uint32_t samplePoint)
           && (t.getSamplePoint()==samplePoint) )
         {
             candle_bittiming_t timing = t.getTiming();
+            if (caps.sjw_max > 0 && timing.sjw > caps.sjw_max) {
+                timing.sjw = caps.sjw_max;
+            }
             bool ok = candle_channel_set_timing(_sharedDev->handle, _channel, &timing);
             if (!ok) {
                 log_error(tr("CandleApi: set bittiming failed"));
