@@ -43,7 +43,7 @@ void CandleSharedDevice::startReader()
     readerThread = std::thread([this]()
     {
         // The adapter only buffers ~70 frames (16 ms at full bus load) and the
-        // queued URBs another 60 ms: if this thread waits behind busy threads
+        // queued URBs another 240 ms: if this thread waits behind busy threads
         // for longer, the adapter drops frames (APP_UsbInOverflow). It mostly
         // sleeps in the USB wait, so a high priority costs no CPU.
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);

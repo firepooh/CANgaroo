@@ -430,6 +430,7 @@ static bool candle_dev_interal_open(candle_handle hdev)
         if (pipeInfo.PipeType == UsbdPipeTypeBulk && USB_ENDPOINT_DIRECTION_IN(pipeInfo.PipeId)) {
             if (!has_in) {
                 dev->bulkInPipe = pipeInfo.PipeId;
+                dev->bulkInMaxPacket = pipeInfo.MaximumPacketSize;
                 has_in = true;
                 candle_logf(L"selected bulk IN pipe=0x%02x maxPacket=%u interval=%u",
                             pipeInfo.PipeId,
@@ -545,7 +546,7 @@ static bool candle_prepare_read(candle_device_t *dev, unsigned urb_num)
         dev->winUSBHandle,
         dev->bulkInPipe,
         dev->rxurbs[urb_num].buf,
-        sizeof(dev->rxurbs[urb_num].buf),
+        dev->rx_buf_size,
         NULL,
         &dev->rxurbs[urb_num].ovl
     );
@@ -635,7 +636,34 @@ static bool candle_close_rxurbs(candle_device_t *dev)
             dev->rxevents[i] = NULL;
             memset(&dev->rxurbs[i].ovl, 0, sizeof(dev->rxurbs[i].ovl));
         }
+        dev->rxurbs[i].buf = NULL;
     }
+
+    /* All reads are cancelled and completed above: the buffers are unused. */
+    free(dev->rx_buf);
+    dev->rx_buf = NULL;
+    dev->rx_buf_size = 0;
+    return true;
+}
+
+/* One buffer per URB, each the smallest multiple of the IN max packet size
+ * that holds a legacy frame (RAW_IO requires multiples of the packet size). */
+static bool candle_alloc_rxurbs(candle_device_t *dev)
+{
+    const DWORD max_packet = dev->bulkInMaxPacket ? dev->bulkInMaxPacket : 64;
+    const DWORD frame_size = sizeof(candle_fd_frame_t);
+
+    dev->rx_buf_size = ((frame_size + max_packet - 1) / max_packet) * max_packet;
+    dev->rx_buf = (uint8_t *)malloc((size_t)dev->rx_buf_size * CANDLE_URB_COUNT);
+    if (dev->rx_buf == NULL) {
+        dev->rx_buf_size = 0;
+        return false;
+    }
+    for (unsigned i=0; i<CANDLE_URB_COUNT; i++) {
+        dev->rxurbs[i].buf = dev->rx_buf + (size_t)i * dev->rx_buf_size;
+    }
+    candle_logf(L"rx urbs=%u size=%lu maxPacket=%lu",
+                (unsigned)CANDLE_URB_COUNT, dev->rx_buf_size, max_packet);
     return true;
 }
 
@@ -666,6 +694,11 @@ bool __stdcall DLL candle_dev_open(candle_handle hdev)
 
     if (candle_dev_interal_open(dev)) {
         dev->rx_next_urb = 0;
+        if (!candle_alloc_rxurbs(dev)) {
+            candle_release_open_handles(dev);
+            dev->last_error = CANDLE_ERR_MALLOC;
+            return false;
+        }
         for (unsigned i=0; i<CANDLE_URB_COUNT; i++) {
             HANDLE ev = CreateEvent(NULL, true, false, NULL);
             if (ev == NULL) {

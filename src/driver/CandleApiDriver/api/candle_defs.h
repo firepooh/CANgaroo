@@ -44,9 +44,9 @@
 #define CANDLE_MAX_DEVICES 32
 /* Outstanding USB IN requests. Legacy gs_usb firmware sends one frame per
  * transfer, so this is also how many frames the host controller can take
- * while the reader thread is not scheduled: 256 = 60 ms at a saturated
+ * while the reader thread is not scheduled: 1024 = 240 ms at a saturated
  * 500 kbit/s bus (~4300 frames/s). 30 (7 ms) lost frames on a busy PC. */
-#define CANDLE_URB_COUNT 256
+#define CANDLE_URB_COUNT 1024
 
 #pragma pack(push,1)
 
@@ -74,7 +74,7 @@ typedef struct {
 typedef struct {
     OVERLAPPED ovl;
     bool pending;
-    uint8_t buf[512];
+    uint8_t *buf;       /* rx_buf_size bytes inside candle_device_t.rx_buf */
 } canlde_rx_urb;
 
 typedef struct {
@@ -87,6 +87,7 @@ typedef struct {
     UCHAR interfaceNumber;
     UCHAR bulkInPipe;
     UCHAR bulkOutPipe;
+    USHORT bulkInMaxPacket;
     HANDLE txEvent;     /* pre-allocated event for timed overlapped writes */
 
     candle_device_config_t dconf;
@@ -96,6 +97,11 @@ typedef struct {
     canlde_rx_urb rxurbs[CANDLE_URB_COUNT];
     HANDLE rxevents[CANDLE_URB_COUNT];
     unsigned rx_next_urb; /* oldest pending URB: the next one to complete */
+    /* One allocation for all URB buffers while the device is open. A legacy
+     * frame is at most 80 bytes; RAW_IO needs a multiple of the max packet
+     * size, so a full-speed device gets 128 bytes per URB instead of 512. */
+    uint8_t *rx_buf;
+    DWORD rx_buf_size;
 } candle_device_t;
 
 typedef struct {
