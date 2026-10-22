@@ -552,7 +552,7 @@ static bool candle_prepare_read(candle_device_t *dev, unsigned urb_num)
 
     if (rc) {
         /* Synchronous completion: data is already in buf and the event is
-         * signaled. WaitForMultipleObjects will return immediately on the
+         * signaled. candle_wait_next_urb() will return immediately on the
          * next call and GetOverlappedResult will succeed, so this is fine. */
         dev->rxurbs[urb_num].pending = true;
         dev->last_error = CANDLE_ERR_OK;
@@ -569,6 +569,47 @@ static bool candle_prepare_read(candle_device_t *dev, unsigned urb_num)
     candle_logf(L"prepare read urb=%u failed winerr=%lu", urb_num, err);
     dev->last_error = CANDLE_ERR_PREPARE_READ;
     return false;
+}
+
+/*
+ * Waits for the next URB in submission order and returns its index.
+ * WinUSB completes the reads queued on one pipe in the order they were
+ * submitted, and every URB is resubmitted right after it was consumed, so the
+ * oldest pending URB is always rx_next_urb. WaitForMultipleObjects() over all
+ * events would instead return the lowest signaled index, which delivers
+ * frames out of order as soon as several URBs complete together (high bus load).
+ */
+static bool candle_wait_next_urb(candle_device_t *dev, uint32_t timeout_ms, DWORD *urb_num)
+{
+    const unsigned n = dev->rx_next_urb;
+
+    if (!dev->rxurbs[n].pending) {
+        /* An earlier resubmission failed: try again, else skip this URB. */
+        if (!candle_prepare_read(dev, n)) {
+            dev->rx_next_urb = (n + 1) % CANDLE_URB_COUNT;
+            dev->last_error = CANDLE_ERR_READ_WAIT;
+            return false;
+        }
+    }
+
+    DWORD wait_result = WaitForSingleObject(dev->rxevents[n], timeout_ms);
+    if (wait_result == WAIT_TIMEOUT) {
+        dev->last_error = CANDLE_ERR_READ_TIMEOUT;
+        return false;
+    }
+    if (wait_result != WAIT_OBJECT_0) {
+        dev->last_error = CANDLE_ERR_READ_WAIT;
+        return false;
+    }
+
+    *urb_num = n;
+    return true;
+}
+
+/* The URB has been consumed (and resubmitted): the next one is now the oldest. */
+static void candle_advance_urb(candle_device_t *dev, DWORD urb_num)
+{
+    dev->rx_next_urb = (urb_num + 1) % CANDLE_URB_COUNT;
 }
 
 static bool candle_close_rxurbs(candle_device_t *dev)
@@ -624,6 +665,7 @@ bool __stdcall DLL candle_dev_open(candle_handle hdev)
     candle_device_t *dev = (candle_device_t*)hdev;
 
     if (candle_dev_interal_open(dev)) {
+        dev->rx_next_urb = 0;
         for (unsigned i=0; i<CANDLE_URB_COUNT; i++) {
             HANDLE ev = CreateEvent(NULL, true, false, NULL);
             if (ev == NULL) {
@@ -871,18 +913,10 @@ bool __stdcall DLL candle_frame_read(candle_handle hdev, candle_frame_t *frame, 
     // TODO ensure device is open..
     candle_device_t *dev = (candle_device_t*)hdev;
 
-    DWORD wait_result = WaitForMultipleObjects(CANDLE_URB_COUNT, dev->rxevents, false, timeout_ms);
-    if (wait_result == WAIT_TIMEOUT) {
-        dev->last_error = CANDLE_ERR_READ_TIMEOUT;
+    DWORD urb_num;
+    if (!candle_wait_next_urb(dev, timeout_ms, &urb_num)) {
         return false;
     }
-
-    if ( (wait_result < WAIT_OBJECT_0) || (wait_result >= WAIT_OBJECT_0 + CANDLE_URB_COUNT) ) {
-        dev->last_error = CANDLE_ERR_READ_WAIT;
-        return false;
-    }
-
-    DWORD urb_num = wait_result - WAIT_OBJECT_0;
     DWORD bytes_transfered;
 
     if (!WinUsb_GetOverlappedResult(dev->winUSBHandle, &dev->rxurbs[urb_num].ovl, &bytes_transfered, false)) {
@@ -892,12 +926,14 @@ bool __stdcall DLL candle_frame_read(candle_handle hdev, candle_frame_t *frame, 
         } else {
             dev->rxurbs[urb_num].pending = false;
             candle_prepare_read(dev, urb_num);
+            candle_advance_urb(dev, urb_num);
         }
         candle_logf(L"classic read result failed urb=%u winerr=%lu", urb_num, err);
         dev->last_error = CANDLE_ERR_READ_RESULT;
         return false;
     }
     dev->rxurbs[urb_num].pending = false;
+    candle_advance_urb(dev, urb_num);
 
     if (bytes_transfered < sizeof(*frame)-4) {
         candle_prepare_read(dev, urb_num);
@@ -990,18 +1026,10 @@ bool __stdcall DLL candle_fd_frame_read(candle_handle hdev, candle_fd_frame_t *f
 {
     candle_device_t *dev = (candle_device_t*)hdev;
 
-    DWORD wait_result = WaitForMultipleObjects(CANDLE_URB_COUNT, dev->rxevents, false, timeout_ms);
-    if (wait_result == WAIT_TIMEOUT) {
-        dev->last_error = CANDLE_ERR_READ_TIMEOUT;
+    DWORD urb_num;
+    if (!candle_wait_next_urb(dev, timeout_ms, &urb_num)) {
         return false;
     }
-
-    if ( (wait_result < WAIT_OBJECT_0) || (wait_result >= WAIT_OBJECT_0 + CANDLE_URB_COUNT) ) {
-        dev->last_error = CANDLE_ERR_READ_WAIT;
-        return false;
-    }
-
-    DWORD urb_num = wait_result - WAIT_OBJECT_0;
     DWORD bytes_transfered;
 
     if (!WinUsb_GetOverlappedResult(dev->winUSBHandle, &dev->rxurbs[urb_num].ovl, &bytes_transfered, false)) {
@@ -1011,12 +1039,14 @@ bool __stdcall DLL candle_fd_frame_read(candle_handle hdev, candle_fd_frame_t *f
         } else {
             dev->rxurbs[urb_num].pending = false;
             candle_prepare_read(dev, urb_num);
+            candle_advance_urb(dev, urb_num);
         }
         candle_logf(L"fd read result failed urb=%u winerr=%lu", urb_num, err);
         dev->last_error = CANDLE_ERR_READ_RESULT;
         return false;
     }
     dev->rxurbs[urb_num].pending = false;
+    candle_advance_urb(dev, urb_num);
 
     /* Minimum: classic CAN header (12 bytes) + at least 8 data bytes = 20 bytes */
     static const DWORD classic_min = sizeof(candle_frame_t) - 4;

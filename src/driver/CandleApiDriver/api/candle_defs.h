@@ -91,6 +91,7 @@ typedef struct {
     candle_capability_t ch_caps[8];
     canlde_rx_urb rxurbs[CANDLE_URB_COUNT];
     HANDLE rxevents[CANDLE_URB_COUNT];
+    unsigned rx_next_urb; /* oldest pending URB: the next one to complete */
 } candle_device_t;
 
 typedef struct {

@@ -69,6 +69,7 @@ void BusListener::run()
     _openComplete = true;
     while (_shouldBeRunning) {
         if (_intf.readMessage(rxMessages, 100)) {
+            const bool received = !rxMessages.isEmpty();
             for(const BusMessage &msg: std::as_const(rxMessages))
             {
                 // CAN drivers call addFrameBits themselves; handle LIN here centrally.
@@ -77,6 +78,10 @@ void BusListener::run()
                 trace->enqueueMessage(msg, false);
             }
             rxMessages.clear();
+            // More frames may be queued: read on without sleeping. On Windows
+            // msleep(1) lasts ~10-15 ms, which capped reception at ~90 frames/s
+            // for drivers that return one frame per call (CandleAPI).
+            if (received) { continue; }
         }
         else if(_intf.isOpen() == false)
         {
