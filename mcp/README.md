@@ -44,10 +44,10 @@ cangaroo는 포트와 토큰을 `%TEMP%\cangaroo-remote.json`에 기록한다.
 MCP 서버는 이 파일을 읽어 접속한다.
 환경 변수 `CANGAROO_HOST`, `CANGAROO_PORT`, `CANGAROO_TOKEN`으로 바꿀 수 있다.
 
-Claude Code에는 아래처럼 stdio 서버로 등록한다.
+Claude Code에는 아래처럼 stdio 서버로 등록한다. `<GUI 경로>`는 PC마다 다르므로 절대 경로로 바꿔 넣는다.
 
 ```bash
-claude mcp add cangaroo -- C:\work\Tools\CAN_TerminalV2\GUI\mcp\.venv\Scripts\python.exe C:\work\Tools\CAN_TerminalV2\GUI\mcp\cangaroo_mcp.py
+claude mcp add cangaroo -- <GUI 경로>\mcp\.venv\Scripts\python.exe <GUI 경로>\mcp\cangaroo_mcp.py
 ```
 
 HTTP로 띄울 수도 있다. 이때 주소는 `http://127.0.0.1:8765/mcp`이다.
