@@ -22,11 +22,19 @@
 #include <algorithm>
 
 #include <QApplication>
+#include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
 #include <QLibraryInfo>
 #include <QStyleFactory>
 #include <QTranslator>
+
+#ifdef REMOTE_CONTROL
+#include <memory>
+
+#include "core/Backend.h"
+#include "remote/RemoteServer.h"
+#endif
 
 
 #if defined(__linux__)
@@ -88,6 +96,20 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationDomain("CANgaroo/Schildkroet");
     QCoreApplication::setApplicationName("CANgaroo");
 
+    QCommandLineParser parser;
+    parser.addHelpOption();
+    const QCommandLineOption workspaceOption("workspace", "Open the workspace <file> at startup.", "file");
+    parser.addOption(workspaceOption);
+#ifdef REMOTE_CONTROL
+    const QCommandLineOption remoteOption("remote", "Enable the remote control endpoint on 127.0.0.1.");
+    const QCommandLineOption remotePortOption("remote-port", "Remote control TCP <port> (default 52790, 0 = any).", "port", "52790");
+    const QCommandLineOption remoteTokenOption("remote-token", "Remote control <token> (default: random, see the discovery file).", "token");
+    const QCommandLineOption remoteAllowTxOption("remote-allow-tx", "Allow remote clients to transmit frames.");
+    const QCommandLineOption remoteBufferOption("remote-buffer", "Frames kept for remote clients (default 100000).", "frames", "100000");
+    parser.addOptions({ remoteOption, remotePortOption, remoteTokenOption, remoteAllowTxOption, remoteBufferOption });
+#endif
+    parser.process(a);
+
     MainWindow w;
     if(w.isMaximizedWindow())
     {
@@ -97,5 +119,28 @@ int main(int argc, char *argv[])
     {
         w.show();
     }
+
+    if (parser.isSet(workspaceOption))
+    {
+        w.loadWorkspaceFromFile(parser.value(workspaceOption));
+    }
+
+#ifdef REMOTE_CONTROL
+    // Declared after w, so it is destroyed before the main window and its drivers.
+    std::unique_ptr<RemoteServer> remote;
+    if (parser.isSet(remoteOption) || parser.isSet(remotePortOption))
+    {
+        RemoteServer::Options options;
+        options.port = static_cast<quint16>(parser.value(remotePortOption).toUInt());
+        options.token = parser.value(remoteTokenOption);
+        if (options.token.isEmpty()) { options.token = qEnvironmentVariable("CANGAROO_REMOTE_TOKEN"); }
+        options.allowTx = parser.isSet(remoteAllowTxOption);
+        options.frameLogCapacity = std::max(1000, parser.value(remoteBufferOption).toInt());
+
+        remote = std::make_unique<RemoteServer>(Backend::instance(), options);
+        remote->start();
+    }
+#endif
+
     return a.exec();
 }

@@ -83,6 +83,8 @@ qmake6 CONFIG+=kvaser CONFIG+=peakcan
 
 - `CONFIG+=peakcan` — enables PeakCAN driver (Windows only, needs PCAN-Basic SDK)
 - `CONFIG+=kvaser` — enables Kvaser driver (needs CANlib SDK)
+- `CONFIG+=remote` — localhost JSON-RPC control endpoint in `src/remote/` (started with `--remote`),
+  used by the MCP server in `mcp/`. `Build_Local.cmd` (Windows) builds with it enabled
 
 ### Platform-specific drivers
 

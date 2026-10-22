@@ -66,6 +66,7 @@ public:
 
     bool isMaximizedWindow();
     bool isDarkMode();
+    void loadWorkspaceFromFile(const QString &filename);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -155,7 +156,6 @@ private:
     void clearWorkspace();
     bool loadWorkspaceTab(QDomElement el);
     bool loadWorkspaceSetup(QDomElement el);
-    void loadWorkspaceFromFile(const QString &filename);
     bool saveWorkspaceToFile(const QString &filename);
 
     void newWorkspace();

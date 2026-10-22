@@ -102,5 +102,11 @@ win32:zscanfd {
     include($$PWD/driver/ZsCanFdDriver/ZsCanFdDriver.pri)
 }
 
+# Pass CONFIG+=remote to qmake to enable the local remote control endpoint
+# (--remote command line option), used by the MCP server in mcp/.
+remote {
+    include($$PWD/remote/remote.pri)
+}
+
 DISTFILES += \
     assets/filter-symbolic.svg

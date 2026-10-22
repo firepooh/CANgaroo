@@ -15,9 +15,22 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 DIST="$ROOT/dist"
 
+# remote: localhost control endpoint for the MCP server in mcp/ (off unless --remote is given)
+QMAKE_ARGS="CONFIG+=release CONFIG+=remote"
+
 echo "=== Configure (qmake6) ==="
 rm -f .qmake.stash src/.qmake.stash
-qmake6 CONFIG+=release
+# make does not rebuild objects when only compiler flags change, so start
+# from scratch whenever the qmake arguments differ from the last build.
+STAMP=build/.qmake_args
+if [ "$(cat "$STAMP" 2>/dev/null)" != "$QMAKE_ARGS" ]; then
+    echo "qmake arguments changed: clean build"
+    rm -rf build/o build/moc build/ui build/rcc
+fi
+# -r regenerates src/Makefile too, so changed CONFIG options are not ignored
+qmake6 -r $QMAKE_ARGS
+mkdir -p build
+echo "$QMAKE_ARGS" > "$STAMP"
 
 echo "=== Build ==="
 mingw32-make -j"$(nproc)"
