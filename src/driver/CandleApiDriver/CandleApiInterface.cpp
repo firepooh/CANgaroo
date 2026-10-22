@@ -595,6 +595,14 @@ bool CandleApiInterface::isOpen()
 
 void CandleApiInterface::close()
 {
+    // BusListener closes the interface even when open() failed. Without this
+    // guard openCount went to -1, and every later open() took the device as
+    // already open, skipped candle_dev_open() and failed until restart.
+    if (!_isOpen)
+    {
+        return;
+    }
+
     candle_channel_stop(_sharedDev->handle, _channel);
     {
         // Stopping the channel discards frames the device has not sent yet
