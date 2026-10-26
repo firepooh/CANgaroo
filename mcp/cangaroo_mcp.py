@@ -126,7 +126,9 @@ mcp = MCPServer(
         "Frames carry a 'seq' cursor; pass 'next' or 'cursor' from a result as 'since' to "
         "continue without gaps. Timestamps (t_us) come from the adapter, so judge timing "
         "with latency_us / period values, never with tool call durations. Transmitting "
-        "needs cangaroo started with --remote-allow-tx. CAN ids accept ints or hex strings."
+        "needs cangaroo started with --remote-allow-tx. CAN ids accept ints or hex strings. "
+        "can_status / can_send / can_recent / can_wait_for are the CanTerminal compatible tools: "
+        "they use channel names such as CAN1 and CAN2 instead of interface numbers."
     ),
 )
 
@@ -284,14 +286,17 @@ async def get_frames(
     interface: int | None = None,
     dir: Literal["rx", "tx", "any"] = "any",
     errors: bool = False,
+    latest: bool = False,
 ) -> dict:
     """Read captured frames from cursor 'since' (default: oldest kept), at most 'limit' (max 2000).
 
     Continue with since=next while 'more' is true. 'dropped' means frames after 'since' were
-    already discarded from the buffer.
+    already discarded from the buffer. latest=true returns the newest 'limit' matching frames
+    instead (still oldest first); it cannot be combined with 'since'.
     """
     return await client.call(
-        "get_frames", since=since, limit=limit, id=id, mask=mask, interface=interface, dir=dir, errors=errors
+        "get_frames", since=since, limit=limit, id=id, mask=mask, interface=interface, dir=dir, errors=errors,
+        latest=latest or None,
     )
 
 
@@ -354,6 +359,219 @@ async def encode_frame(
 ) -> dict:
     """Build a frame from DBC signal values (message by name or id). With send=true it is also transmitted."""
     return await client.call("encode_frame", message=message, signals=signals, interface=interface, send=send)
+
+
+# ---------------------------------------------------------------------------
+# CanTerminal compatibility: can_status / can_send / can_recent / can_wait_for
+#
+# Test scripts written for the old CanTerminal MCP server (http://127.0.0.1:5400/mcp)
+# call these four tools with channel names CAN1, CAN2 and parse their text output.
+# They behave and format like CanTerminal's CanMcpTools.cs, so those scripts run
+# unchanged against cangaroo. Channel names map to adapters by USB serial
+# (channels.json), because cangaroo's candleN numbering can change between runs.
+# ---------------------------------------------------------------------------
+
+CHANNELS_FILE = os.environ.get(
+    "CANGAROO_CHANNELS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "channels.json")
+)
+
+
+def _channel_serials() -> dict[str, str]:
+    """Channel name (upper case) -> adapter USB serial from channels.json; empty without the file."""
+    try:
+        with open(CHANNELS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    return {name.upper(): str(serial) for name, serial in data.get("channels", {}).items()}
+
+
+def _usb_interface_path(serial: str) -> str | None:
+    """Instance path tail of the adapter's CAN interface (USB\\VID_1D50&PID_606F&MI_00\\<tail>).
+
+    cangaroo's interface details contain the same tail in the device path, so it ties a
+    serial to a cangaroo interface. Windows names the interfaces of a composite device
+    <ParentIdPrefix>&<interface number>, and keeps ParentIdPrefix in the parent's registry
+    key, which is named after the serial. (Get-PnpDevice finds the same in about 15 s.)
+    """
+    try:
+        import winreg
+
+        key = rf"SYSTEM\CurrentControlSet\Enum\USB\VID_1D50&PID_606F\{serial}"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+            prefix, _ = winreg.QueryValueEx(k, "ParentIdPrefix")
+    except (ImportError, OSError):
+        return None
+    return f"{prefix}&0000".lower()
+
+
+async def _channels() -> tuple[dict[str, int], dict[int, str], list[dict]]:
+    """(channel name -> interface id, interface id -> channel name, CAN interfaces).
+
+    Interfaces without a channel name keep their cangaroo name (e.g. candle0_ch0).
+    """
+    interfaces = [i for i in await client.call("list_interfaces") if i.get("bus_type", "CAN") == "CAN"]
+    by_name: dict[str, int] = {}
+    for channel, serial in _channel_serials().items():
+        path = _usb_interface_path(serial)
+        match = [i for i in interfaces if path and f"#{path}#" in i.get("details", "").lower()]
+        if match:
+            by_name[channel] = match[0]["id"]
+    by_id = {intf_id: name for name, intf_id in by_name.items()}
+    for i in interfaces:
+        by_id.setdefault(i["id"], i["name"])
+    return by_name, by_id, interfaces
+
+
+async def _resolve_channel(channel: str) -> int:
+    by_name, _, interfaces = await _channels()
+    if channel.upper() in by_name:
+        return by_name[channel.upper()]
+    for i in interfaces:
+        if i["name"].lower() == channel.lower():
+            return i["id"]
+    known = list(by_name) + [i["name"] for i in interfaces if i["id"] not in by_name.values()]
+    raise ToolError(f"Unknown channel '{channel}'. Channels: {', '.join(known) or 'none'} (see can_status).")
+
+
+def _parse_hex_id(text: str) -> int:
+    s = text.strip()
+    if s.lower().startswith("0x"):
+        s = s[2:]
+    try:
+        return int(s, 16)
+    except ValueError:
+        raise ToolError(f"'{text}' is not a hex arbitration id.") from None
+
+
+def _format_frame(f: dict, names: dict[int, str]) -> str:
+    """One frame as CanTerminal prints it: '  t=1.234567 CAN1 RX 0x123 [8] 0011... (EXT)'."""
+    flags = []
+    if f.get("extended"):
+        flags.append("EXT")
+    if f.get("fd"):
+        flags.append("FD+BRS" if f.get("brs") else "FD")
+    if f.get("rtr"):
+        flags.append("RTR")
+    if "error" in f:
+        flags.append("ERR")
+    id_text = f"{f['id']:08X}" if f.get("extended") else f"{f['id']:03X}"
+    line = (
+        f"  t={f['t']:.6f} {names.get(f['interface'], str(f['interface']))} "
+        f"{'RX' if f['dir'] == 'rx' else 'TX'} 0x{id_text} [{f['len']}] {f['data'].replace(' ', '')}"
+    )
+    if flags:
+        line += f" ({','.join(flags)})"
+    if "error" in f:
+        line += f"  |  {f['error']}"
+    return line
+
+
+@mcp.tool()
+async def can_status() -> dict:
+    """CanTerminal compatible. Report the channels (CAN1, CAN2, ...), whether the measurement is
+    running, each channel's interface, bitrate and bus state, and how many frames were captured.
+    Call this before the other can_* tools; their channel names come from here.
+    """
+    hello = await client.call("hello", token=client._settings()[2])
+    meas = await client.call("measurement_status")
+    by_name, by_id, interfaces = await _channels()
+    state = {i["id"]: i for i in meas.get("interfaces", [])}
+
+    details = []
+    for i in sorted(interfaces, key=lambda i: (i["id"] not in by_name.values(), by_id[i["id"]])):
+        cfg = i.get("config", {})
+        details.append({
+            "channel": by_id[i["id"]],
+            "interface": i["id"],
+            "name": i["name"],
+            "open": state.get(i["id"], {}).get("open", False),
+            "state": state.get(i["id"], {}).get("state", i.get("state")),
+            "bitrate": cfg.get("bitrate"),
+            "sample_point": cfg.get("sample_point"),
+            "fd": cfg.get("fd"),
+            "listen_only": cfg.get("listen_only"),
+        })
+    return {
+        "connected": bool(meas.get("running")) and any(d["open"] for d in details),
+        "adapter": f"cangaroo {hello.get('version')} {hello.get('local_version', '')} (Candlelight)".strip(),
+        "channels": [d["channel"] for d in details],
+        "dbc": None,
+        "profile": "none",
+        "mode": "live",
+        "log": None,
+        "channelDbc": [],
+        "totalFrames": max(0, meas.get("cursor", 1) - 1),
+        "version": hello.get("version"),
+        "running": bool(meas.get("running")),
+        "allowTx": hello.get("allow_tx"),
+        "channelDetails": details,
+    }
+
+
+@mcp.tool()
+async def can_send(
+    channel: str,
+    id: str,
+    data: str | None = None,
+    ext: bool | None = None,
+    fd: bool = False,
+    brs: bool = False,
+) -> str:
+    """CanTerminal compatible. Transmit one frame on a channel (e.g. "CAN1"). id is hex ("123",
+    "0x18FF50E5"); data is a hex string ("0011AABB"), empty for a zero-length frame. ext defaults
+    to what the id needs. Needs a running measurement and cangaroo started with --remote-allow-tx.
+    """
+    arb_id = _parse_hex_id(id)
+    try:
+        payload = bytes.fromhex((data or "").replace(" ", ""))
+    except ValueError:
+        raise ToolError(f"'{data}' is not a hex payload.") from None
+    interface = await _resolve_channel(channel)
+    try:
+        await client.call(
+            "send_frame", interface=interface, id=arb_id, data=payload.hex(" ").upper(),
+            extended=ext if ext is not None else arb_id > 0x7FF, fd=fd, brs=brs,
+        )
+    except RemoteError as e:
+        raise ToolError(f"{channel}: {e.message}") from None
+    return f"Sent 0x{arb_id:X} on {channel} ({len(payload)} byte(s))."
+
+
+@mcp.tool()
+async def can_recent(count: int = 50, channel: str | None = None, id: str | None = None) -> str:
+    """CanTerminal compatible. The newest captured frames, newest last (default 50, at most 1000),
+    optionally of one channel and one hex id. Does not wait; use can_wait_for for a reply.
+    """
+    params: dict[str, Any] = {"latest": True, "limit": min(max(count, 1), 1000), "errors": True}
+    if channel:
+        params["interface"] = await _resolve_channel(channel)
+    if id:
+        params["id"] = _parse_hex_id(id)
+    frames = (await client.call("get_frames", **params))["frames"]
+    if not frames:
+        return "No frames in the buffer matching that filter."
+    _, names, _ = await _channels()
+    return "\n".join([f"{len(frames)} frame(s), newest last:"] + [_format_frame(f, names) for f in frames]) + "\n"
+
+
+@mcp.tool()
+async def can_wait_for(id: str, channel: str | None = None, timeout_ms: int = 5000) -> str:
+    """CanTerminal compatible. Block until a frame with this hex id is received (own transmissions
+    do not count), then return it. timeout_ms defaults to 5000, at most 300000.
+    """
+    arb_id = _parse_hex_id(id)
+    timeout_ms = min(max(timeout_ms, 1), 300000)
+    if not (await client.call("measurement_status")).get("running"):
+        raise ToolError("The measurement is not running in cangaroo, so no frame can arrive.")
+    params: dict[str, Any] = {"id": arb_id, "dir": "rx", "timeout_ms": timeout_ms}
+    if channel:
+        params["interface"] = await _resolve_channel(channel)
+    result = await client.call("wait_for_frame", **params)
+    if not result.get("matched"):
+        return f"Timed out: no frame with ID 0x{arb_id:X} within {timeout_ms} ms."
+    _, names, _ = await _channels()
+    return "Received:\n" + _format_frame(result["frame"], names)
 
 
 def main() -> None:

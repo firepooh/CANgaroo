@@ -112,8 +112,15 @@ RemoteApi::RemoteApi(Backend &backend, bool allowTx, int frameLogCapacity, QObje
     : QObject(parent),
       _backend(backend),
       _allowTx(allowTx),
-      _frameLog(*backend.getTrace(), frameLogCapacity, this)
+      _frameLog(frameLogCapacity, this)
 {
+    // BusTrace emits messageEnqueued while it holds its (recursive) mutex in the
+    // enqueuing thread, so getMessage(idx) is safe here; see ScriptWindow.
+    BusTrace *trace = backend.getTrace();
+    connect(trace, &BusTrace::messageEnqueued, &_frameLog, [this, trace](int idx)
+    {
+        _frameLog.append(trace->getMessage(idx));
+    }, Qt::DirectConnection);
     connect(&_frameLog, &RemoteFrameLog::framesAppended, this, &RemoteApi::checkPending);
     connect(&_backend, &Backend::endMeasurement, this, &RemoteApi::stopAllPeriodic);
 }
@@ -728,9 +735,18 @@ QJsonValue RemoteApi::getFrames(const QJsonObject &params)
                                : _frameLog.oldestSeq();
     const int limit = static_cast<int>(RemoteJson::toUInt(params, "limit", k_maxFramesPerRead, 100));
 
+    // latest: the newest `limit` matching frames (still oldest first), for "what
+    // was on the bus just now" without paging through the whole buffer
     uint64_t next = 0;
     bool dropped = false;
-    const QList<RemoteFrame> frames = _frameLog.read(since, limit, filter, &next, &dropped);
+    const bool latest = RemoteJson::toBool(params, "latest", false);
+    if (latest && params.contains("since"))
+    {
+        throw RemoteError(RemoteError::InvalidParams, "'latest' and 'since' cannot be combined");
+    }
+    const QList<RemoteFrame> frames = latest ? _frameLog.readLatest(limit, filter)
+                                             : _frameLog.read(since, limit, filter, &next, &dropped);
+    if (latest) { next = _frameLog.nextSeq(); }
 
     QJsonArray arr;
     for (const RemoteFrame &f : frames) { arr.append(RemoteJson::frameToJson(f)); }

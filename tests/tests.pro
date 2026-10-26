@@ -19,4 +19,5 @@ SUBDIRS += \
     slcan_codec \
     candle_error_frame \
     xcp_decoder \
+    remote_frame_log \
     measurement_setup

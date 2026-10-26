@@ -33,8 +33,6 @@
 
 #include "core/BusMessage.h"
 
-class BusTrace;
-
 // One frame as seen by remote clients: the BusMessage plus a sequence number
 // that keeps increasing for the whole session (it is not reset by clear()).
 struct RemoteFrame
@@ -69,9 +67,9 @@ class RemoteFrameLog : public QObject
     Q_OBJECT
 
 public:
-    RemoteFrameLog(BusTrace &trace, int capacity, QObject *parent = nullptr);
+    explicit RemoteFrameLog(int capacity, QObject *parent = nullptr);
 
-    // Called from the bus listener threads.
+    // Called from the bus listener threads (RemoteApi feeds it from BusTrace).
     void append(const BusMessage &msg);
 
     // Sequence number the next frame will get: "from now on" cursor.
@@ -84,6 +82,9 @@ public:
     // after `since` were already discarded from the ring buffer.
     QList<RemoteFrame> read(uint64_t since, int limit, const RemoteFrameFilter &filter,
                             uint64_t *next, bool *dropped = nullptr) const;
+
+    // Returns the newest `limit` frames that match the filter, oldest first.
+    QList<RemoteFrame> readLatest(int limit, const RemoteFrameFilter &filter) const;
 
     void clear();
 

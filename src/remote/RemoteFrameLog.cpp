@@ -21,9 +21,10 @@
 
 #include "RemoteFrameLog.h"
 
+#include <algorithm>
+
 #include <QMutexLocker>
 
-#include "core/BusTrace.h"
 #include "remote/RemoteError.h"
 #include "remote/RemoteJson.h"
 
@@ -75,16 +76,10 @@ RemoteFrameFilter RemoteFrameFilter::fromJson(const QJsonObject &obj)
     return f;
 }
 
-RemoteFrameLog::RemoteFrameLog(BusTrace &trace, int capacity, QObject *parent)
+RemoteFrameLog::RemoteFrameLog(int capacity, QObject *parent)
     : QObject(parent),
       _capacity(capacity)
 {
-    // BusTrace emits messageEnqueued while it holds its (recursive) mutex in the
-    // enqueuing thread, so getMessage(idx) is safe here; see ScriptWindow.
-    connect(&trace, &BusTrace::messageEnqueued, this, [this, &trace](int idx)
-    {
-        append(trace.getMessage(idx));
-    }, Qt::DirectConnection);
 }
 
 void RemoteFrameLog::append(const BusMessage &msg)
@@ -145,6 +140,19 @@ QList<RemoteFrame> RemoteFrameLog::read(uint64_t since, int limit, const RemoteF
     }
 
     if (next) { *next = std::max(cursor, since); }
+    return result;
+}
+
+QList<RemoteFrame> RemoteFrameLog::readLatest(int limit, const RemoteFrameFilter &filter) const
+{
+    QList<RemoteFrame> result;
+    QMutexLocker locker(&_mutex);
+
+    for (auto it = _frames.rbegin(); it != _frames.rend() && result.size() < limit; ++it)
+    {
+        if (filter.matches(it->msg)) { result.append(*it); }
+    }
+    std::reverse(result.begin(), result.end());
     return result;
 }
 

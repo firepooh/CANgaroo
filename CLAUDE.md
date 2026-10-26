@@ -49,6 +49,7 @@ shared config; `tests/support/LogStub.cpp` satisfies `core/Log` without `Backend
 | `slcan_codec/`        | SLCAN ASCII frame decoding, incl. malformed input |
 | `candle_error_frame/` | gs_usb / Candlelight 2.5 error frames to `BusError` flags, legacy and ElmueSoft (from `linux/can/error.h` + Elmue firmware) |
 | `xcp_decoder/`        | XCP on CAN: CTO commands/responses, byte order from CONNECT, DAQ/ODT from ALLOC_DAQ/ALLOC_ODT and DAQ_KEY_BYTE, XCP before UDS in `ProtocolManager` (packet layouts from ASAM MCD-1 XCP Part 2); A2L `XCP_ON_CAN` IDs (ASAM MCD-2 MC syntax) |
+| `remote_frame_log/`   | Remote frame ring buffer: sequence numbers across evictions, `read` from a cursor, newest-N `readLatest` with filters (remote API contract) |
 
 **Expected values come from outside cangaroo.** The big-endian bug in issue #34
 survived because extract and inject were wrong in mutually cancelling ways, so

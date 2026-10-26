@@ -1,0 +1,7 @@
+{
+  "_comment": "Channel names of the CanTerminal compatible tools (can_status, can_send, can_recent, can_wait_for) and the USB serial of the adapter behind each. Bench NO1 = CAN1, NO2 = CAN2. Point CANGAROO_CHANNELS at another file for a different bench.",
+  "channels": {
+    "CAN1": "207E3689514350052",
+    "CAN2": "208A36AC514350062"
+  }
+}
