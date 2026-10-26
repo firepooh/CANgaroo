@@ -11,6 +11,16 @@ set -e
 export LC_ALL=C
 export COMSPEC="${COMSPEC:-C:\\Windows\\System32\\cmd.exe}"
 
+# The MSYS2 login shell keeps only its own PATH; src/localversion reads the
+# local version from git, so fall back to Git for Windows when MSYS2 has no git
+if ! command -v git >/dev/null 2>&1 && [ -x "/c/Program Files/Git/cmd/git.exe" ]; then
+    export PATH="$PATH:/c/Program Files/Git/cmd"
+fi
+
+# Elapsed time per step, so a slow build shows where the time goes
+step_start=$SECONDS
+step_done() { echo "--- $1: $((SECONDS - step_start)) s"; step_start=$SECONDS; }
+
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 DIST="$ROOT/dist"
@@ -31,9 +41,11 @@ fi
 qmake6 -r $QMAKE_ARGS
 mkdir -p build
 echo "$QMAKE_ARGS" > "$STAMP"
+step_done "configure"
 
 echo "=== Build ==="
 mingw32-make -j"$(nproc)"
+step_done "compile"
 
 echo "=== Deploy to dist ==="
 rm -rf "$DIST"
@@ -41,6 +53,7 @@ mkdir -p "$DIST"
 cp bin/cangaroo.exe "$DIST/"
 
 windeployqt6 --release --no-system-d3d-compiler --no-translations "$DIST/cangaroo.exe"
+step_done "windeployqt"
 
 # Python runtime: libpython + stdlib under lib/pythonX.Y/.
 # PythonEngine sets PYTHONHOME to the exe folder when it finds lib/pythonX.Y/os.py there.
@@ -52,25 +65,23 @@ tar -C "/mingw64/lib/python$PYVER" \
     --exclude=site-packages --exclude=test --exclude=tests --exclude=__pycache__ \
     --exclude=idlelib --exclude=tkinter --exclude=turtledemo \
     -cf - . | tar -C "$PYLIB" -xf -
+step_done "python runtime"
 
-# MinGW runtime DLLs needed by the exe, the Qt plugins and the Python extension modules
-copy_mingw_deps()
-{
-    ntldd -R "$@" 2>/dev/null \
-        | grep -i 'mingw64' \
-        | awk '{print $3}' \
-        | sed -E 's|\\|/|g' \
-        | sort -u \
-        | while IFS= read -r dll; do
-            name=$(basename "$dll")
-            [ -f "$DIST/$name" ] || cp "$(cygpath -u "$dll")" "$DIST/"
-          done
-}
+# MinGW runtime DLLs needed by the exe, the Qt plugins and the Python extension modules.
+# One ntldd run over all of them: starting ntldd and the text tools once per file
+# (about 100 files) took close to 3 minutes, because MSYS2 starts processes slowly.
+find "$DIST" -mindepth 2 \( -name '*.dll' -o -name '*.pyd' \) -print0 \
+    | xargs -0 ntldd -R "$DIST/cangaroo.exe" 2>/dev/null \
+    | grep -i 'mingw64' \
+    | awk '{print $3}' \
+    | sed -E 's|\\|/|g' \
+    | sort -u \
+    | while IFS= read -r dll; do
+        name=${dll##*/}
+        [ -f "$DIST/$name" ] || cp "$(cygpath -u "$dll")" "$DIST/"
+      done
 
-copy_mingw_deps "$DIST/cangaroo.exe"
-find "$DIST" -mindepth 2 \( -name '*.dll' -o -name '*.pyd' \) | while IFS= read -r f; do
-    copy_mingw_deps "$f"
-done
+step_done "mingw dlls"
 
 mkdir -p "$DIST/examples"
 cp examples/*.py "$DIST/examples/" 2>/dev/null || true
