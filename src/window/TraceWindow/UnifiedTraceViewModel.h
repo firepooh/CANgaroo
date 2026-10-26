@@ -16,7 +16,8 @@ public:
     enum Category {
         Cat_All,
         Cat_UDS,
-        Cat_J1939
+        Cat_J1939,
+        Cat_XCP
     };
 
     UnifiedTraceViewModel(Backend &backend, Category category = Cat_All);
@@ -63,8 +64,10 @@ private:
     bool m_aggregating;
     std::map<uint64_t, std::shared_ptr<UnifiedTraceItem>> m_j1939AggregatedMap;
     std::map<uint64_t, std::shared_ptr<UnifiedTraceItem>> m_udsAggregatedMap;
+    std::map<uint64_t, std::shared_ptr<UnifiedTraceItem>> m_xcpAggregatedMap;
     uint64_t getJ1939Key(const ProtocolMessage& pmsg) const;
     uint64_t getUdsKey(const ProtocolMessage& pmsg) const;
+    uint64_t getXcpKey(const ProtocolMessage& pmsg) const;
 
     QHash<uint64_t, uint64_t>   m_prevTimestampByKey;
     QHash<uint64_t, BusMessage> m_prevMessageByKey;

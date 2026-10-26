@@ -8,6 +8,7 @@ SOURCES += \
     $$PWD/UnifiedTraceViewModel.cpp \
     $$PWD/DataColumnDelegate.cpp \
     $$PWD/TraceWindow.cpp \
+    $$PWD/XcpSessionDialog.cpp \
 
 HEADERS  += \
     $$PWD/AggregatedTraceViewModel.h \
@@ -19,6 +20,7 @@ HEADERS  += \
     $$PWD/UnifiedTraceViewModel.h \
     $$PWD/DataColumnDelegate.h \
     $$PWD/TraceWindow.h \
+    $$PWD/XcpSessionDialog.h \
     $$PWD/TraceViewTypes.h \
 
 FORMS    += \

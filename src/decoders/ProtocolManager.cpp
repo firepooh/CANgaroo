@@ -1,14 +1,42 @@
 #include "ProtocolManager.h"
 #include "UdsDecoder.h"
 #include "J1939Decoder.h"
+#include "XcpDecoder.h"
+#include "XcpSessions.h"
 
 ProtocolManager::ProtocolManager() {
     m_udsDecoder = std::make_shared<UdsDecoder>();
     m_j1939Decoder = std::make_shared<J1939Decoder>();
 }
 
+ProtocolManager::~ProtocolManager() = default;
+
+void ProtocolManager::syncXcpSessions()
+{
+    const XcpSessions &sessions = XcpSessions::instance();
+    if (m_xcpRevision == sessions.revision()) {
+        return;
+    }
+    m_xcpRevision = sessions.revision();
+    m_xcpDecoders.clear();
+    for (const XcpConfig &config : sessions.sessions()) {
+        m_xcpDecoders.push_back(std::make_unique<XcpDecoder>(config));
+    }
+}
+
 DecodeStatus ProtocolManager::processFrame(const BusMessage& frame, ProtocolMessage& outMsg) {
     DecodeStatus status = DecodeStatus::Ignored;
+
+    // XCP first: its IDs are configured explicitly, and XCP on CAN usually runs on
+    // 11-bit IDs that the UDS decoder below would otherwise claim
+    syncXcpSessions();
+    for (auto &xcp : m_xcpDecoders) {
+        status = xcp->tryDecode(frame, outMsg);
+        if (status == DecodeStatus::Completed) {
+            outMsg.globalIndex = ++m_msgCounter;
+            return status;
+        }
+    }
 
     // RX and TX traffic are decoded independently (UdsDecoder/J1939Decoder key
     // their reassembly sessions by direction) so that a UDS/J1939 request
@@ -70,4 +98,7 @@ void ProtocolManager::reset() {
     m_msgCounter = 0;
     m_udsDecoder->reset();
     m_j1939Decoder->reset();
+    for (auto &xcp : m_xcpDecoders) {
+        xcp->reset();
+    }
 }

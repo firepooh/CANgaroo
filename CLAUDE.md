@@ -48,6 +48,7 @@ shared config; `tests/support/LogStub.cpp` satisfies `core/Log` without `Backend
 | `ldf_parser/`         | LIN Description File parsing |
 | `slcan_codec/`        | SLCAN ASCII frame decoding, incl. malformed input |
 | `candle_error_frame/` | gs_usb / Candlelight 2.5 error frames to `BusError` flags, legacy and ElmueSoft (from `linux/can/error.h` + Elmue firmware) |
+| `xcp_decoder/`        | XCP on CAN: CTO commands/responses, byte order from CONNECT, DAQ/ODT from ALLOC_DAQ/ALLOC_ODT and DAQ_KEY_BYTE, XCP before UDS in `ProtocolManager` (packet layouts from ASAM MCD-1 XCP Part 2) |
 
 **Expected values come from outside cangaroo.** The big-endian bug in issue #34
 survived because extract and inject were wrong in mutually cancelling ways, so
@@ -148,7 +149,7 @@ src/
                      model/ (CanDb*/Lin* object graph), dbc/ (DBC parser),
                      ldf/ (LIN Description File parser, header-only)
   driver/        — BusInterface, BusListener, CanDriver + per-driver subdirectories
-  decoders/      — protocol decoders (UDS, J1939)
+  decoders/      — protocol decoders (UDS, J1939, XCP on CAN; XCP IDs per interface in XcpSessions)
   window/        — UI windows, one self-contained directory + .pri each
                    (TraceWindow, SetupDialog, TxGeneratorWindow, ReplayWindow,
                    GatewayWindow, LinControlWindow, SettingsDialog, ...);

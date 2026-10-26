@@ -41,6 +41,8 @@
 #include "TraceFilterDialog.h"
 #include "TraceFilterModel.h"
 #include "UnifiedTraceViewModel.h"
+#include "XcpSessionDialog.h"
+#include "decoders/XcpSessions.h"
 
 
 TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
@@ -67,10 +69,11 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
     UnifiedTraceViewModel::Category cats[] = {
         UnifiedTraceViewModel::Cat_All,
         UnifiedTraceViewModel::Cat_UDS,
-        UnifiedTraceViewModel::Cat_J1939
+        UnifiedTraceViewModel::Cat_J1939,
+        UnifiedTraceViewModel::Cat_XCP
     };
 
-    QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939 };
+    QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp };
 
     QFont font("Monospace");
     font.setStyleHint(QFont::TypeWriter);
@@ -103,6 +106,8 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
 
         connect(_filterModels[i], &QAbstractItemModel::rowsInserted, this, &TraceWindow::onRowsInserted);
     }
+    // XCP packet names such as "DAQ-DTO (DAQ #12|ODT #3)" need more room than message names
+    ui->treeXcp->setColumnWidth(BaseTraceViewModel::column_name, 300);
 
     connect(_aggMonitorFilterModel, &QAbstractItemModel::rowsInserted, this, &TraceWindow::onRowsInserted);
 
@@ -110,6 +115,7 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
     _tabModes[Cat_Aggregated] = mode_aggregated;
     _tabModes[Cat_UDS]        = mode_unified;
     _tabModes[Cat_J1939]      = mode_aggregated;
+    _tabModes[Cat_XCP]        = mode_aggregated;
 
     // Alt models: UDS aggregated, J1939 rolling (monitor tab has no alt model here)
     _altViewModels[Cat_Aggregated] = nullptr;
@@ -130,6 +136,11 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
 
     makeAltModel(Cat_UDS,    UnifiedTraceViewModel::Cat_UDS,    true);   // UDS aggregated
     makeAltModel(Cat_J1939,  UnifiedTraceViewModel::Cat_J1939,  false);  // J1939 rolling
+    makeAltModel(Cat_XCP,    UnifiedTraceViewModel::Cat_XCP,    false);  // XCP rolling (command sequence)
+
+    connect(ui->xcpSessionsButton, &QPushButton::clicked, this, &TraceWindow::openXcpSessions);
+    connect(&XcpSessions::instance(), &XcpSessions::changed, this, &TraceWindow::updateXcpStatus);
+    updateXcpStatus();
 
     connect(ui->tabs, &QTabWidget::currentChanged, this, &TraceWindow::on_tabs_currentChanged);
 
@@ -187,7 +198,7 @@ void TraceWindow::setMode(TraceWindow::mode_t mode)
     int tabIdx = ui->tabs->currentIndex();
     _tabModes[tabIdx] = mode;
 
-    QTreeView *trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939 };
+    QTreeView *trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp };
     QTreeView *tree = trees[tabIdx];
 
     if (tabIdx == Cat_Aggregated) {
@@ -206,16 +217,23 @@ void TraceWindow::setMode(TraceWindow::mode_t mode)
         // UDS and J1939: primary model = the original (rolling for UDS, aggregated for J1939)
         // alt model = the new alternative (aggregated for UDS, rolling for J1939)
         bool usePrimary = (tabIdx == Cat_UDS)   ? (mode == mode_unified)
-                        : (tabIdx == Cat_J1939) ? (mode == mode_aggregated)
+                        : (tabIdx == Cat_J1939 || tabIdx == Cat_XCP) ? (mode == mode_aggregated)
                         : true;
         if (usePrimary) {
             tree->setSortingEnabled(false);
             tree->header()->setSortIndicator(-1, Qt::AscendingOrder);
             _filterModels[tabIdx]->sort(-1);
             tree->setModel(_filterModels[tabIdx]);
-        } else {
+        } else if (tabIdx == Cat_UDS) {
+            // The UDS alternative is aggregated: sort it by ID
             tree->setSortingEnabled(true);
             tree->sortByColumn(BaseTraceViewModel::column_canid, Qt::AscendingOrder);
+            tree->setModel(_altFilterModels[tabIdx]);
+        } else {
+            // The J1939 / XCP alternative is the rolling log: keep the arrival order
+            tree->setSortingEnabled(false);
+            tree->header()->setSortIndicator(-1, Qt::AscendingOrder);
+            _altFilterModels[tabIdx]->sort(-1);
             tree->setModel(_altFilterModels[tabIdx]);
         }
     }
@@ -288,6 +306,7 @@ bool TraceWindow::saveXML(Backend &backend, QDomDocument &xml, QDomElement &root
     root.setAttribute("mode", _tabModes[Cat_Aggregated] == mode_unified ? "unified" : "aggregated");
     root.setAttribute("modeUds", _tabModes[Cat_UDS] == mode_aggregated ? "aggregated" : "unified");
     root.setAttribute("modeJ1939", _tabModes[Cat_J1939] == mode_unified ? "unified" : "aggregated");
+    root.setAttribute("modeXcp", _tabModes[Cat_XCP] == mode_unified ? "unified" : "aggregated");
     root.setAttribute("TimestampMode", _timestampMode);
     root.setAttribute("ActiveTab", ui->tabs->currentIndex());
 
@@ -345,6 +364,7 @@ bool TraceWindow::loadXML(Backend &backend, QDomElement &el)
     _tabModes[Cat_Aggregated] = (modeStr == "unified") ? mode_unified : mode_aggregated;
     _tabModes[Cat_UDS]  = (el.attribute("modeUds",   "unified")    == "aggregated") ? mode_aggregated : mode_unified;
     _tabModes[Cat_J1939]= (el.attribute("modeJ1939", "aggregated") == "unified")    ? mode_unified    : mode_aggregated;
+    _tabModes[Cat_XCP]  = (el.attribute("modeXcp",   "aggregated") == "unified")    ? mode_unified    : mode_aggregated;
     // Apply mode for Monitor tab (the tab that is currently visible after loading)
     setMode(_tabModes[ui->tabs->currentIndex()]);
     setTimestampMode(el.attribute("TimestampMode", "0").toInt());
@@ -430,7 +450,7 @@ void TraceWindow::onRowsInserted(const QModelIndex &parent, int first, int last)
 
 void TraceWindow::doScrollToBottom()
 {
-    QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939 };
+    QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp };
     for (int i = 0; i < Cat_Count; ++i) {
         if (_scrollPending[i]) {
             trees[i]->scrollToBottom();
@@ -474,6 +494,22 @@ void TraceWindow::applyIcons()
     ui->filterButton->setIcon(AppHelpers::themedIcon("view-filter", ":/assets/filter-symbolic.svg"));
     ui->TraceClearpushButton->setIcon(AppHelpers::themedIcon("user-trash-full",
                                                             ":/assets/icons/edit-clear-symbolic.svg"));
+}
+
+void TraceWindow::openXcpSessions()
+{
+    XcpSessionDialog dialog(*_backend, this);
+    dialog.exec();
+}
+
+void TraceWindow::updateXcpStatus()
+{
+    QStringList parts;
+    for (const XcpConfig &s : XcpSessions::instance().sessions()) {
+        parts << QStringLiteral("%1: %2").arg(_backend->getInterfaceName(s.interfaceId), s.toString());
+    }
+    ui->xcpStatusLabel->setText(parts.isEmpty() ? tr("No XCP session. Set the request and response IDs first.")
+                                                : parts.join(QStringLiteral("    ")));
 }
 
 void TraceWindow::openFilterDialog()

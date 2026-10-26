@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QSettings>
 #include "core/ThemeManager.h"
+#include "decoders/XcpSessions.h"
 
 void UnifiedTraceViewModel::applyProtocolConfig()
 {
@@ -16,7 +17,7 @@ void UnifiedTraceViewModel::applyProtocolConfig()
 }
 
 UnifiedTraceViewModel::UnifiedTraceViewModel(Backend &backend, Category category)
-    : BaseTraceViewModel(backend), m_category(category), m_aggregating(category == Cat_J1939)
+    : BaseTraceViewModel(backend), m_category(category), m_aggregating(category == Cat_J1939 || category == Cat_XCP)
 {
     applyProtocolConfig();
     m_rootItem = std::make_shared<UnifiedTraceItem>(BusMessage()); // Dummy root
@@ -34,6 +35,8 @@ UnifiedTraceViewModel::UnifiedTraceViewModel(Backend &backend, Category category
     connect(backend.getTrace(), &BusTrace::beforeClear, this, &UnifiedTraceViewModel::beforeClear);
     connect(backend.getTrace(), &BusTrace::afterClear, this, &UnifiedTraceViewModel::afterClear);
     connect(&backend, &Backend::onSetupChanged, this, &UnifiedTraceViewModel::onSetupChanged);
+    // New XCP IDs: decode the trace again from the start with fresh session state
+    connect(&XcpSessions::instance(), &XcpSessions::changed, this, &UnifiedTraceViewModel::onSetupChanged);
 }
 
 UnifiedTraceViewModel::~UnifiedTraceViewModel()
@@ -199,6 +202,20 @@ void UnifiedTraceViewModel::processNewMessages()
                 } else {
                     shouldAppend = true;
                 }
+            } else if (pmsg.protocol.compare("xcp", Qt::CaseInsensitive) == 0 && m_category == Cat_XCP) {
+                // Aggregated: one row per CAN ID and group, i.e. per CTO direction and per ODT (PID)
+                if (m_aggregating) {
+                    uint64_t key = getXcpKey(pmsg);
+                    if (m_xcpAggregatedMap.count(key)) {
+                        auto &item = m_xcpAggregatedMap[key];
+                        item->updateProtocolMessage(pmsg);
+                        updatedRows.insert(item->row());
+                    } else {
+                        shouldAppend = true;
+                    }
+                } else {
+                    shouldAppend = true;
+                }
             } else if (pmsg.protocol.compare("j1939", Qt::CaseInsensitive) == 0 && m_category == Cat_J1939) {
                 if (m_aggregating) {
                     uint64_t key = getJ1939Key(pmsg);
@@ -230,6 +247,8 @@ void UnifiedTraceViewModel::processNewMessages()
                     m_j1939AggregatedMap[getJ1939Key(pmsg)] = item;
                 } else if (m_category == Cat_UDS && m_aggregating) {
                     m_udsAggregatedMap[getUdsKey(pmsg)] = item;
+                } else if (m_category == Cat_XCP && m_aggregating) {
+                    m_xcpAggregatedMap[getXcpKey(pmsg)] = item;
                 }
             }
         }
@@ -324,6 +343,14 @@ void UnifiedTraceViewModel::processNewMessages()
                         m_udsAggregatedMap[getUdsKey(child->protocolMessage())] = child;
                     }
                 }
+            } else if (m_category == Cat_XCP && m_aggregating) {
+                m_xcpAggregatedMap.clear();
+                for (int i = 0; i < m_rootItem->childCount(); ++i) {
+                    auto child = m_rootItem->child(i);
+                    if (child && child->isProtocol() && child->protocolMessage().protocol.compare("xcp", Qt::CaseInsensitive) == 0) {
+                        m_xcpAggregatedMap[getXcpKey(child->protocolMessage())] = child;
+                    }
+                }
             }
         }
     }
@@ -358,6 +385,7 @@ void UnifiedTraceViewModel::afterClear()
     m_previousRowTimestamp = 0;
     m_j1939AggregatedMap.clear();
     m_udsAggregatedMap.clear();
+    m_xcpAggregatedMap.clear();
     m_prevTimestampByKey.clear();
     m_prevMessageByKey.clear();
     endResetModel();
@@ -376,6 +404,7 @@ void UnifiedTraceViewModel::onSetupChanged()
     m_previousRowTimestamp = 0;
     m_j1939AggregatedMap.clear();
     m_udsAggregatedMap.clear();
+    m_xcpAggregatedMap.clear();
     m_prevTimestampByKey.clear();
     m_prevMessageByKey.clear();
 
@@ -409,6 +438,14 @@ uint64_t UnifiedTraceViewModel::getJ1939Key(const ProtocolMessage& pmsg) const
     uint32_t pgn = pmsg.id;
     uint32_t sa = pmsg.metadata.value("Source Address").toUInt();
     return (ifId << 32) | (pgn << 8) | (sa & 0xFF);
+}
+
+uint64_t UnifiedTraceViewModel::getXcpKey(const ProtocolMessage& pmsg) const
+{
+    // Interface, CAN ID (request / response) and group (0 = CTO, PID + 1 = DTO)
+    uint64_t ifId = pmsg.rawFrames.isEmpty() ? 0 : pmsg.rawFrames.first().getInterfaceId();
+    uint32_t canId = pmsg.rawFrames.isEmpty() ? 0 : pmsg.rawFrames.first().getRawId();
+    return (ifId << 48) | (static_cast<uint64_t>(canId) << 16) | (pmsg.id & 0xFFFF);
 }
 
 uint64_t UnifiedTraceViewModel::getUdsKey(const ProtocolMessage& pmsg) const
@@ -458,6 +495,10 @@ QVariant UnifiedTraceViewModel::data_DisplayRole(const QModelIndex &index, [[may
             case column_sender:
                 if (pmsg.protocol.compare("uds", Qt::CaseInsensitive) == 0) {
                     return (pmsg.type == MessageType::Request) ? tr("Tester") : tr("ECU");
+                }
+                if (pmsg.protocol.compare("xcp", Qt::CaseInsensitive) == 0) {
+                    // XcpDecoder marks everything the master sends (CTO commands, STIM) as Request
+                    return (pmsg.type == MessageType::Request) ? tr("Master") : tr("Slave");
                 }
                 return "";
             default: return QVariant();

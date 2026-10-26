@@ -88,14 +88,15 @@ private:
     timestamp_mode_t _timestampMode;
     QTimer _scrollTimer;
     QTimer _filterDebounceTimer;
-    bool _scrollPending[3] = {}; // One per Cat_Count
-
     enum Category {
         Cat_Aggregated = 0,
         Cat_UDS = 1,
         Cat_J1939 = 2,
-        Cat_Count = 3
+        Cat_XCP = 3,
+        Cat_Count = 4
     };
+
+    bool _scrollPending[Cat_Count] = {};
 
     TraceFilterModel * _filterModels[Cat_Count];
     UnifiedTraceViewModel *_viewModels[Cat_Count];
@@ -114,4 +115,6 @@ private:
 
     void applyDialogFilters();
     void applyIcons();
+    void openXcpSessions();
+    void updateXcpStatus();
 };

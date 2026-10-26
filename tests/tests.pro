@@ -18,4 +18,5 @@ SUBDIRS += \
     ldf_parser \
     slcan_codec \
     candle_error_frame \
+    xcp_decoder \
     measurement_setup
