@@ -33,6 +33,7 @@
 #include <QtTest>
 
 #include "core/BusMessage.h"
+#include "decoders/A2lXcpReader.h"
 #include "decoders/ProtocolManager.h"
 #include "decoders/XcpDecoder.h"
 #include "decoders/XcpSessions.h"
@@ -88,7 +89,91 @@ private slots:
     void stimFromMasterWithoutContext();
     void ignoresOtherIdsInterfacesAndFrameFormats();
     void protocolManagerPrefersXcpOverUds();
+
+    // --- A2L ---
+    void a2lReadsIdsFromXcpOnCanBlock();
+    void a2lExtendedIdsUseTheTopBit();
+    void a2lIgnoresCommentsAndOtherBlocks();
+    void a2lWithoutXcpOnCanHasNoPair();
 };
+
+namespace
+{
+
+A2lXcpIds parseA2l(const QString &text)
+{
+    QString copy = text;
+    QTextStream in(&copy);
+    return A2lXcpReader::parse(in);
+}
+
+} // namespace
+
+// IF_DATA XCP / XCP_ON_CAN as in ASAM MCD-2 MC: the transport layer version first,
+// then keyword-value pairs
+void XcpDecoderTest::a2lReadsIdsFromXcpOnCanBlock()
+{
+    const A2lXcpIds ids = parseA2l(QStringLiteral(
+        "/begin MODULE ECU \"\"\n"
+        "  /begin IF_DATA XCP\n"
+        "    /begin PROTOCOL_LAYER 0x0100 2000 2000 0 0 0 0 0 8 8 BYTE_ORDER_MSB_LAST ADDRESS_GRANULARITY_BYTE\n"
+        "    /end PROTOCOL_LAYER\n"
+        "    /begin XCP_ON_CAN\n"
+        "      0x0100\n"
+        "      CAN_ID_BROADCAST 0x100\n"
+        "      CAN_ID_MASTER 0x7E1\n"
+        "      CAN_ID_SLAVE 2025\n"
+        "      BAUDRATE 500000\n"
+        "    /end XCP_ON_CAN\n"
+        "  /end IF_DATA\n"
+        "/end MODULE\n"));
+    QVERIFY(ids.hasPair());
+    QCOMPARE(*ids.master, 0x7E1u);
+    QCOMPARE(*ids.slave, 2025u);          // decimal is valid too
+    QCOMPARE(*ids.broadcast, 0x100u);
+    QVERIFY(!ids.extended);
+}
+
+void XcpDecoderTest::a2lExtendedIdsUseTheTopBit()
+{
+    const A2lXcpIds ids = parseA2l(QStringLiteral(
+        "/begin XCP_ON_CAN 0x0100\n"
+        "  CAN_ID_MASTER 0x98DA00F1\n"
+        "  CAN_ID_SLAVE  0x98DAF100\n"
+        "/end XCP_ON_CAN\n"));
+    QVERIFY(ids.hasPair());
+    QCOMPARE(*ids.master, 0x18DA00F1u);
+    QCOMPARE(*ids.slave, 0x18DAF100u);
+    QVERIFY(ids.extended);
+}
+
+void XcpDecoderTest::a2lIgnoresCommentsAndOtherBlocks()
+{
+    const A2lXcpIds ids = parseA2l(QStringLiteral(
+        "CAN_ID_MASTER 0x111   // outside the block\n"
+        "/begin XCP_ON_CAN 0x0100\n"
+        "  /* CAN_ID_MASTER 0x222\n"
+        "     CAN_ID_SLAVE 0x333 */\n"
+        "  CAN_ID_MASTER 0x601 // the real one\n"
+        "  CAN_ID_SLAVE 0x701\n"
+        "/end XCP_ON_CAN\n"
+        "/begin XCP_ON_CAN 0x0100\n"
+        "  CAN_ID_MASTER 0x602\n"
+        "/end XCP_ON_CAN\n"));
+    QCOMPARE(*ids.master, 0x601u);   // the first block wins
+    QCOMPARE(*ids.slave, 0x701u);
+    QVERIFY(!ids.broadcast);
+}
+
+void XcpDecoderTest::a2lWithoutXcpOnCanHasNoPair()
+{
+    const A2lXcpIds ids = parseA2l(QStringLiteral(
+        "/begin IF_DATA XCP\n"
+        "  /begin XCP_ON_TCP_IP 0x0100 5555 ADDRESS \"192.168.0.1\"\n"
+        "  /end XCP_ON_TCP_IP\n"
+        "/end IF_DATA\n"));
+    QVERIFY(!ids.hasPair());
+}
 
 void XcpDecoderTest::connectCommandAndIntelResponse()
 {

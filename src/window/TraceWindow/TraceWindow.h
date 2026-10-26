@@ -117,4 +117,8 @@ private:
     void applyIcons();
     void openXcpSessions();
     void updateXcpStatus();
+    // XCP IDs in the workspace; the interface is kept by USB device path and name
+    [[nodiscard]] QString interfaceDevice(BusInterfaceId id) const;
+    void saveXcpSessions(QDomDocument &xml, QDomElement &root) const;
+    void loadXcpSessions(const QDomElement &el);
 };

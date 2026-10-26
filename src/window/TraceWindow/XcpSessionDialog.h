@@ -19,6 +19,9 @@
 
 #pragma once
 
+#include <cstdint>
+#include <utility>
+
 #include <QDialog>
 
 class Backend;
@@ -47,6 +50,9 @@ private:
 
     void loadInterface();
     void apply();
+    void loadA2l();
+    // Interface whose trace frames carry the A2L's master/slave IDs most often, with that count
+    [[nodiscard]] std::pair<int, int> interfaceCarrying(uint32_t master, uint32_t slave, bool extended) const;
     void removeSelected();
     void refreshList();
 };

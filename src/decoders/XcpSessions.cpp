@@ -52,6 +52,13 @@ void XcpSessions::clear()
     bump();
 }
 
+void XcpSessions::replaceAll(const QList<XcpConfig> &sessions)
+{
+    if (sessions == _sessions) { return; }
+    _sessions = sessions;
+    bump();
+}
+
 void XcpSessions::bump()
 {
     ++_revision;

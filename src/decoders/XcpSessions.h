@@ -41,6 +41,8 @@ public:
     void set(const XcpConfig &config);
     void remove(BusInterfaceId interfaceId);
     void clear();
+    // Replaces all sessions at once, so the trace is decoded again only once
+    void replaceAll(const QList<XcpConfig> &sessions);
 
 signals:
     void changed();

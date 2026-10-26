@@ -4,7 +4,8 @@ SOURCES += \
     $$PWD/J1939Decoder.cpp \
     $$PWD/XcpTables.cpp \
     $$PWD/XcpDecoder.cpp \
-    $$PWD/XcpSessions.cpp
+    $$PWD/XcpSessions.cpp \
+    $$PWD/A2lXcpReader.cpp
 
 HEADERS += \
     $$PWD/ProtocolTypes.h \
@@ -14,4 +15,5 @@ HEADERS += \
     $$PWD/J1939Decoder.h \
     $$PWD/XcpTables.h \
     $$PWD/XcpDecoder.h \
-    $$PWD/XcpSessions.h
+    $$PWD/XcpSessions.h \
+    $$PWD/A2lXcpReader.h

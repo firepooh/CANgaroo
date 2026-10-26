@@ -26,12 +26,15 @@
 #include <QCheckBox>
 #include <QDomDocument>
 #include <QHeaderView>
+#include <QRegularExpression>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSortFilterProxyModel>
 
 #include "core/Backend.h"
 #include "core/BusTrace.h"
+#include "core/Log.h"
+#include "driver/BusInterface.h"
 #include "core/ThemeManager.h"
 #include "helpers/apphelpers.h"
 #include "window/ConditionalLoggingDialog/ConditionalLoggingDialog.h"
@@ -350,7 +353,80 @@ bool TraceWindow::saveXML(Backend &backend, QDomDocument &xml, QDomElement &root
 
     root.appendChild(filterEl);
 
+    saveXcpSessions(xml, root);
+
     return true;
+}
+
+QString TraceWindow::interfaceDevice(BusInterfaceId id) const
+{
+    // The USB device path in the interface details ("usb#vid_1d50&pid_606f&mi_00#7&...")
+    // stays the same for an adapter, while candleN numbering can change between runs
+    BusInterface *intf = _backend->getInterfaceById(id);
+    if (!intf) { return QString(); }
+    static const QRegularExpression usbPath(QStringLiteral("usb#[^#\\s|]+#[^#\\s|]+"),
+                                            QRegularExpression::CaseInsensitiveOption);
+    return usbPath.match(intf->getDetailsStr()).captured(0).toLower();
+}
+
+void TraceWindow::saveXcpSessions(QDomDocument &xml, QDomElement &root) const
+{
+    QDomElement xcpEl = xml.createElement("XcpSessions");
+    for (const XcpConfig &s : XcpSessions::instance().sessions()) {
+        QDomElement e = xml.createElement("Session");
+        e.setAttribute("interface", _backend->getInterfaceName(s.interfaceId));
+        e.setAttribute("device", interfaceDevice(s.interfaceId));
+        e.setAttribute("request", QString::number(s.requestId, 16).toUpper());
+        e.setAttribute("response", QString::number(s.responseId, 16).toUpper());
+        if (s.broadcastId) { e.setAttribute("broadcast", QString::number(*s.broadcastId, 16).toUpper()); }
+        e.setAttribute("extended", s.extended ? "1" : "0");
+        xcpEl.appendChild(e);
+    }
+    root.appendChild(xcpEl);
+}
+
+void TraceWindow::loadXcpSessions(const QDomElement &el)
+{
+    // A workspace without XCP sessions clears them, like any other trace setting
+    QList<XcpConfig> sessions;
+    const QDomElement xcpEl = el.firstChildElement("XcpSessions");
+    for (QDomElement e = xcpEl.firstChildElement("Session"); !e.isNull(); e = e.nextSiblingElement("Session")) {
+        const QString device = e.attribute("device");
+        const QString name = e.attribute("interface");
+
+        // The same adapter first (by USB device path), then the same name
+        std::optional<BusInterfaceId> found;
+        const BusInterfaceIdList ids = _backend->getInterfaceList();
+        if (!device.isEmpty()) {
+            for (BusInterfaceId id : ids) {
+                if (interfaceDevice(id) == device) { found = id; break; }
+            }
+        }
+        if (!found) {
+            for (BusInterfaceId id : ids) {
+                if (_backend->getInterfaceName(id) == name) { found = id; break; }
+            }
+        }
+        if (!found) {
+            log_warning(tr("XCP session on %1 not restored: no such interface").arg(name));
+            continue;
+        }
+
+        bool okRequest = false;
+        bool okResponse = false;
+        XcpConfig c;
+        c.interfaceId = *found;
+        c.requestId = e.attribute("request").toUInt(&okRequest, 16);
+        c.responseId = e.attribute("response").toUInt(&okResponse, 16);
+        bool okBroadcast = false;
+        const uint32_t broadcast = e.attribute("broadcast").toUInt(&okBroadcast, 16);
+        if (okBroadcast) { c.broadcastId = broadcast; }
+        c.extended = e.attribute("extended") == "1";
+        if (!okRequest || !okResponse) { continue; }
+        sessions.removeIf([&](const XcpConfig &s) { return s.interfaceId == c.interfaceId; });
+        sessions.append(c);
+    }
+    XcpSessions::instance().replaceAll(sessions);
 }
 
 bool TraceWindow::loadXML(Backend &backend, QDomElement &el)
@@ -409,6 +485,8 @@ bool TraceWindow::loadXML(Backend &backend, QDomElement &el)
 
         applyDialogFilters();
     }
+
+    loadXcpSessions(el);
 
     return true;
 }
