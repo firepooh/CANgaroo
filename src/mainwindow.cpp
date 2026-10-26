@@ -49,6 +49,7 @@
 #include "core/ThemeManager.h"
 #include "core/TraceRecorder.h"
 #include "window/TraceWindow/TraceWindow.h"
+#include "window/MonitorWindow/MonitorWindow.h"
 #include "window/SetupDialog/SetupDialog.h"
 #include "window/LogWindow/LogWindow.h"
 #include "window/GraphWindow/GraphWindow.h"
@@ -1122,8 +1123,10 @@ int MainWindow::askSaveBecauseWorkspaceModified()
 QMainWindow *MainWindow::createTraceWindow(const QString &title)
 {
     QMainWindow *mm = createTab(title.isNull() ? tr("Trace") : title);
-    auto *trace = new TraceWindow(mm, backend());
-    mm->setCentralWidget(trace);
+    // Message monitor first; the original TraceWindow is its second page
+    auto *monitor = new MonitorWindow(mm, backend());
+    mm->setCentralWidget(monitor);
+    TraceWindow *trace = monitor->traceWindow();
 
     QDockWidget *dockLogWidget      = addLogWidget(mm);
     QDockWidget *dockStatusWidget   = addStatusWidget(mm);

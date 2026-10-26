@@ -2,6 +2,7 @@
 # .pri listing its sources, headers and forms; add new ones here.
 
 include($$PWD/TraceWindow/TraceWindow.pri)
+include($$PWD/MonitorWindow/MonitorWindow.pri)
 include($$PWD/SetupDialog/SetupDialog.pri)
 include($$PWD/LogWindow/LogWindow.pri)
 include($$PWD/GraphWindow/GraphWindow.pri)
