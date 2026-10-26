@@ -80,7 +80,33 @@ RemoteServer::RemoteServer(Backend &backend, const Options &options, QObject *pa
 
 RemoteServer::~RemoteServer()
 {
+    // Only remove the file this instance wrote: a second cangaroo whose port was
+    // taken must not delete the discovery file of the one that is listening.
+    if (!_wroteDiscoveryFile) { return; }
+    QFile file(discoveryFilePath());
+    if (file.open(QIODevice::ReadOnly))
+    {
+        const QJsonObject o = QJsonDocument::fromJson(file.readAll()).object();
+        file.close();
+        if (o.value("pid").toInteger() != QCoreApplication::applicationPid()) { return; }
+    }
     QFile::remove(discoveryFilePath());
+}
+
+bool RemoteServer::isListening() const
+{
+    return _server->isListening();
+}
+
+void RemoteServer::setAllowTx(bool allowTx)
+{
+    _options.allowTx = allowTx;
+    _api->setAllowTx(allowTx);
+    if (_server->isListening())
+    {
+        writeDiscoveryFile();
+        log_info(tr("Remote: transmit %1").arg(allowTx ? tr("allowed") : tr("blocked")));
+    }
 }
 
 QString RemoteServer::discoveryFilePath()
@@ -108,8 +134,9 @@ quint16 RemoteServer::port() const
     return _server->serverPort();
 }
 
-void RemoteServer::writeDiscoveryFile() const
+void RemoteServer::writeDiscoveryFile()
 {
+    _wroteDiscoveryFile = true;
     QJsonObject o;
     o["host"]     = "127.0.0.1";
     o["port"]     = port();

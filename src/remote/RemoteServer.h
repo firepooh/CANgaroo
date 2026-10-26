@@ -54,7 +54,13 @@ public:
     ~RemoteServer() override;
 
     bool start();
+    [[nodiscard]] bool isListening() const;
     [[nodiscard]] quint16 port() const;
+    [[nodiscard]] QString token() const { return _options.token; }
+    [[nodiscard]] bool allowTx() const { return _options.allowTx; }
+    [[nodiscard]] int frameLogCapacity() const { return _options.frameLogCapacity; }
+    // Takes effect for the next request; the discovery file is rewritten.
+    void setAllowTx(bool allowTx);
     [[nodiscard]] static QString discoveryFilePath();
 
 private:
@@ -69,12 +75,13 @@ private:
     QTcpServer *_server;
     RemoteApi *_api;
     QHash<QTcpSocket *, Client> _clients;
+    bool _wroteDiscoveryFile = false;
 
     void onNewConnection();
     void onReadyRead(QTcpSocket *socket);
     void onDisconnected(QTcpSocket *socket);
     void handleLine(QTcpSocket *socket, const QByteArray &line);
-    void writeDiscoveryFile() const;
+    void writeDiscoveryFile();
     static void send(QTcpSocket *socket, const QJsonObject &obj);
     static void sendError(QTcpSocket *socket, const QJsonValue &id, int code, const QString &message);
 };
