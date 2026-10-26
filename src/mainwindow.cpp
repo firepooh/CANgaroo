@@ -50,6 +50,7 @@
 #include "core/TraceRecorder.h"
 #include "window/TraceWindow/TraceWindow.h"
 #include "window/MonitorWindow/MonitorWindow.h"
+#include "localversion/LocalVersion.h"
 #include "window/SetupDialog/SetupDialog.h"
 #include "window/LogWindow/LogWindow.h"
 #include "window/GraphWindow/GraphWindow.h"
@@ -131,7 +132,8 @@ void MainWindow::initVersion()
     QCoreApplication::setApplicationVersion(VERSION_STRING);
 
     auto *versionLabel = new QLabel(this);
-    versionLabel->setText(QString("v%1").arg(QCoreApplication::applicationVersion()));
+    versionLabel->setText(LocalVersion::summary());
+    versionLabel->setToolTip(LocalVersion::details());
     versionLabel->setStyleSheet("padding-right: 15px; font-weight: bold; font-size: 12px;");
     statusBar()->addPermanentWidget(versionLabel);
 
@@ -1385,11 +1387,12 @@ void MainWindow::showAboutDialog()
 {
     QMessageBox::about(this,
                        tr("About CANgaroo"),
-                       "CANgaroo\n"
+                       QStringLiteral("CANgaroo\n"
                        "Open Source CAN bus analyzer\n"
                        "https://github.com/Schildkroet/CANgaroo"
                        "\n"
-                       "Version " VERSION_STRING "\n"
+                       "Version " VERSION_STRING "\n")
+                       + LocalVersion::details() + QStringLiteral("\n"
                        "\n"
                        "(c)2024-2026 Schildkroet\n"
                        "(c)2015-2017 Hubert Denkmair\n"
@@ -1399,7 +1402,7 @@ void MainWindow::showAboutDialog()
                        "(c)2026 Jayachandran Dharuman"
                        "\n\n"
                        "CANgaroo is free software licensed"
-                       "\nunder the GPL v2 license.");
+                       "\nunder the GPL v2 license."));
 }
 
 void MainWindow::startMeasurement()

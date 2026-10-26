@@ -42,6 +42,7 @@
 #include "db/model/CanDbSignal.h"
 #include "driver/BusInterface.h"
 #include "driver/CanTiming.h"
+#include "localversion/LocalVersion.h"
 #include "remote/RemoteJson.h"
 
 namespace
@@ -461,6 +462,8 @@ QJsonValue RemoteApi::hello(const QJsonObject &)
     QJsonObject o;
     o["server"]          = "cangaroo";
     o["version"]         = VERSION_STRING;
+    o["local_version"]   = LocalVersion::local();
+    o["base_commit"]     = LocalVersion::baseCommit();
     o["api_version"]     = k_apiVersion;
     o["allow_tx"]        = _allowTx;
     o["frame_log_size"]  = _frameLog.capacity();

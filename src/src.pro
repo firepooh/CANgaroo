@@ -14,6 +14,8 @@ CONFIG += link_pkgconfig
 
 VERSION = 0.7.1
 DEFINES += VERSION_STRING=\\\"$${VERSION}\\\"
+# Local fork version from git, shown next to VERSION
+include($$PWD/localversion/localversion.pri)
 
 TRANSLATIONS = \
     translations/i18n_de_DE.ts \
