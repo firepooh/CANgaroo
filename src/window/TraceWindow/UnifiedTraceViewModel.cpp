@@ -122,6 +122,20 @@ BusMessage UnifiedTraceViewModel::getMessage(const QModelIndex &index) const
     }
 }
 
+namespace
+{
+
+// An aggregated row keeps the time and payload of its previous update, so the
+// delta is the row's own period and the changed bytes are against that update
+void updateAggregatedItem(UnifiedTraceItem &item, const ProtocolMessage &pmsg)
+{
+    item.setPrevSameIdTimestamp(item.timestamp());
+    item.setPrevPayload(item.protocolMessage().payload);
+    item.updateProtocolMessage(pmsg);
+}
+
+} // namespace
+
 QVariant UnifiedTraceViewModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid())
@@ -138,7 +152,18 @@ QVariant UnifiedTraceViewModel::data(const QModelIndex &index, int role) const
         {
             if (index.column() != column_data) { return QVariant(); }
             UnifiedTraceItem *item = static_cast<UnifiedTraceItem*>(index.internalPointer());
-            if (!item || item->isProtocol() || item->isMetadata() || item->isSignal()) { return QVariant(); }
+            if (!item || item->isMetadata() || item->isSignal()) { return QVariant(); }
+            if (item->isProtocol()) {
+                const QByteArray &cur = item->protocolMessage().payload;
+                const QByteArray &prev = item->prevPayload();
+                if (prev.isEmpty()) { return QVariant(); }
+                uint64_t mask = 0;
+                for (int i = 0; i < qMin<qsizetype>(cur.size(), 64); ++i) {
+                    if (i >= prev.size() || cur[i] != prev[i])
+                        mask |= (1ULL << i);
+                }
+                return QVariant::fromValue(mask);
+            }
             const BusMessage &cur  = item->rawFrame();
             const BusMessage &prev = item->prevSameIdFrame();
             if (prev.getLength() == 0) { return QVariant(); }
@@ -194,7 +219,7 @@ void UnifiedTraceViewModel::processNewMessages()
                     uint64_t key = getUdsKey(pmsg);
                     if (m_udsAggregatedMap.count(key)) {
                         auto &item = m_udsAggregatedMap[key];
-                        item->updateProtocolMessage(pmsg);
+                        updateAggregatedItem(*item, pmsg);
                         updatedRows.insert(item->row());
                     } else {
                         shouldAppend = true;
@@ -208,7 +233,7 @@ void UnifiedTraceViewModel::processNewMessages()
                     uint64_t key = getXcpKey(pmsg);
                     if (m_xcpAggregatedMap.count(key)) {
                         auto &item = m_xcpAggregatedMap[key];
-                        item->updateProtocolMessage(pmsg);
+                        updateAggregatedItem(*item, pmsg);
                         updatedRows.insert(item->row());
                     } else {
                         shouldAppend = true;
@@ -221,7 +246,7 @@ void UnifiedTraceViewModel::processNewMessages()
                     uint64_t key = getJ1939Key(pmsg);
                     if (m_j1939AggregatedMap.count(key)) {
                         auto &item = m_j1939AggregatedMap[key];
-                        item->updateProtocolMessage(pmsg);
+                        updateAggregatedItem(*item, pmsg);
                         updatedRows.insert(item->row());
                     } else {
                         shouldAppend = true;
@@ -641,13 +666,13 @@ QString UnifiedTraceViewModel::formatUnifiedTimestamp(uint64_t ts, uint64_t prev
         {
             const uint64_t startTs = static_cast<uint64_t>(backend()->getTimestampAtMeasurementStart() * 1000000.0);
             val = (ts >= startTs) ? static_cast<double>(ts - startTs) / 1000000.0 : 0.0;
-            break;
+            return QStringLiteral("%1 s").arg(val, 0, 'f', 6);
         }
         case timestamp_mode_delta:
-            val = (prevTs > 0 && ts >= prevTs) ? static_cast<double>(ts - prevTs) / 1000000.0 : 0.0;
-            break;
+            // Milliseconds with microseconds, as in the Monitor window
+            val = (prevTs > 0 && ts >= prevTs) ? static_cast<double>(ts - prevTs) / 1000.0 : 0.0;
+            return QStringLiteral("%1 ms").arg(val, 0, 'f', 3);
         default:
             return QStringLiteral("0.000");
     }
-    return QString::number(val, 'f', 3);
 }

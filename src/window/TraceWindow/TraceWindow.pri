@@ -7,6 +7,7 @@ SOURCES += \
     $$PWD/UnifiedTraceItem.cpp \
     $$PWD/UnifiedTraceViewModel.cpp \
     $$PWD/DataColumnDelegate.cpp \
+    $$PWD/MonitorStyleDelegate.cpp \
     $$PWD/TraceWindow.cpp \
     $$PWD/XcpSessionDialog.cpp \
 
@@ -19,6 +20,7 @@ HEADERS  += \
     $$PWD/UnifiedTraceItem.h \
     $$PWD/UnifiedTraceViewModel.h \
     $$PWD/DataColumnDelegate.h \
+    $$PWD/MonitorStyleDelegate.h \
     $$PWD/TraceWindow.h \
     $$PWD/XcpSessionDialog.h \
     $$PWD/TraceViewTypes.h \

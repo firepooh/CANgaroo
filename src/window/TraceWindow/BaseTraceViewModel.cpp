@@ -102,20 +102,8 @@ QVariant BaseTraceViewModel::headerData(int section, Qt::Orientation orientation
 
     }
     else if (role == Qt::TextAlignmentRole) {
-        switch (section) {
-            case column_index:     return QVariant(Qt::AlignCenter);
-            case column_timestamp: return QVariant(Qt::AlignCenter);
-            case column_channel:   return QVariant(Qt::AlignCenter);
-            case column_direction: return QVariant(Qt::AlignCenter);
-            case column_type:      return QVariant(Qt::AlignCenter);
-            case column_canid:     return QVariant(Qt::AlignCenter);
-            case column_sender:    return QVariant(Qt::AlignLeft | Qt::AlignVCenter);
-            case column_name:      return QVariant(Qt::AlignLeft | Qt::AlignVCenter);
-            case column_dlc:       return QVariant(Qt::AlignCenter);
-            case column_data:      return QVariant(Qt::AlignLeft | Qt::AlignVCenter);
-            case column_comment:   return QVariant(Qt::AlignLeft | Qt::AlignVCenter);
-            default: return QVariant();
-        }
+        // Left-aligned titles, as in the Monitor window
+        return (section >= 0 && section < column_count) ? QVariant(Qt::AlignLeft | Qt::AlignVCenter) : QVariant();
     }
     return QVariant();
 }
@@ -194,11 +182,8 @@ QVariant BaseTraceViewModel::formatTimestamp(timestamp_mode_t mode, const BusMes
 
         double t_current = currentMsg.getFloatTimestamp();
         double t_last = lastMsg.getFloatTimestamp();
-        if (t_last==0) {
-            return QString::number(0.0, 'f', 3);
-        } else {
-            return QString::number(qMax(0.0, t_current - t_last), 'f', 3);
-        }
+        const double deltaMs = (t_last == 0) ? 0.0 : qMax(0.0, t_current - t_last) * 1000.0;
+        return QStringLiteral("%1 ms").arg(deltaMs, 0, 'f', 3);
 
     } else if (mode==timestamp_mode_absolute) {
 
@@ -211,7 +196,7 @@ QVariant BaseTraceViewModel::formatTimestamp(timestamp_mode_t mode, const BusMes
     } else if (mode==timestamp_mode_relative) {
 
         double t_current = currentMsg.getFloatTimestamp();
-        return QString::number(t_current - backend()->getTimestampAtMeasurementStart(), 'f', 3);
+        return QStringLiteral("%1 s").arg(t_current - backend()->getTimestampAtMeasurementStart(), 0, 'f', 6);
 
     }
 

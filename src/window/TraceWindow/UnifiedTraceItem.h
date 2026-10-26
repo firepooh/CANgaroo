@@ -40,6 +40,9 @@ public:
     void setPrevSameIdTimestamp(uint64_t ts) { m_prevSameIdTimestamp = ts; }
     const BusMessage& prevSameIdFrame() const { return m_prevSameIdFrame; }
     void setPrevSameIdFrame(const BusMessage &msg) { m_prevSameIdFrame = msg; }
+    // Aggregated protocol rows: the payload before the last update, for the changed bytes
+    const QByteArray& prevPayload() const { return m_prevPayload; }
+    void setPrevPayload(const QByteArray &payload) { m_prevPayload = payload; }
 
 private:
     QVector<std::shared_ptr<UnifiedTraceItem>> m_childItems;
@@ -58,5 +61,6 @@ private:
     uint64_t m_timestamp = 0;
     uint64_t m_prevSameIdTimestamp = 0;
     BusMessage m_prevSameIdFrame;
+    QByteArray m_prevPayload;
     int m_row = -1;
 };

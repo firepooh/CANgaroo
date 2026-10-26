@@ -40,7 +40,7 @@
 #include "window/ConditionalLoggingDialog/ConditionalLoggingDialog.h"
 
 #include "AggregatedTraceViewModel.h"
-#include "DataColumnDelegate.h"
+#include "MonitorStyleDelegate.h"
 #include "TraceFilterDialog.h"
 #include "TraceFilterModel.h"
 #include "UnifiedTraceViewModel.h"
@@ -78,9 +78,6 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
 
     QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp };
 
-    QFont font("Monospace");
-    font.setStyleHint(QFont::TypeWriter);
-
     for (int i = 0; i < Cat_Count; ++i) {
         _viewModels[i] = new UnifiedTraceViewModel(backend, cats[i]);
         _filterModels[i] = new TraceFilterModel(this);
@@ -88,29 +85,24 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
 
         QTreeView* tree = trees[i];
         tree->setModel(_filterModels[i]);
-        tree->setFont(font);
-        tree->setAlternatingRowColors(true);
-        tree->setUniformRowHeights(true);
         tree->setRootIsDecorated(true);
-        tree->header()->setDefaultAlignment(Qt::AlignCenter | Qt::AlignVCenter);
-
-        tree->setColumnWidth(BaseTraceViewModel::column_index, 70);
-        tree->setColumnWidth(BaseTraceViewModel::column_timestamp, 100);
-        tree->setColumnWidth(BaseTraceViewModel::column_channel, 120);
-        tree->setColumnWidth(BaseTraceViewModel::column_direction, 56);
-        tree->setColumnWidth(BaseTraceViewModel::column_type, 80);
-        tree->setColumnWidth(BaseTraceViewModel::column_canid, 110);
-        tree->setColumnWidth(BaseTraceViewModel::column_sender, 150);
-        tree->setColumnWidth(BaseTraceViewModel::column_name, 150);
-        tree->setColumnWidth(BaseTraceViewModel::column_dlc, 50);
-        tree->setColumnWidth(BaseTraceViewModel::column_data, 260);
-        tree->setColumnWidth(BaseTraceViewModel::column_comment, 120);
-        tree->setItemDelegateForColumn(BaseTraceViewModel::column_data, new DataColumnDelegate(tree));
+        MonitorStyleDelegate::applyTo(tree);
 
         connect(_filterModels[i], &QAbstractItemModel::rowsInserted, this, &TraceWindow::onRowsInserted);
     }
+
+    // Protocol tabs: the type column only repeats "UDS" / "XCP", and the ID
+    // carries the SID or PGN
+    const int ch = ui->treeXcp->fontMetrics().averageCharWidth();
+    ui->treeUds->setColumnHidden(BaseTraceViewModel::column_type, true);
+    ui->treeXcp->setColumnHidden(BaseTraceViewModel::column_type, true);
+    ui->treeUds->setColumnWidth(BaseTraceViewModel::column_canid, 16 * ch);
+    ui->treeJ1939->setColumnWidth(BaseTraceViewModel::column_canid, 22 * ch);
     // XCP packet names such as "DAQ-DTO (DAQ #12|ODT #3)" need more room than message names
-    ui->treeXcp->setColumnWidth(BaseTraceViewModel::column_name, 300);
+    ui->treeXcp->setColumnWidth(BaseTraceViewModel::column_name, 34 * ch);
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [trees](ThemeManager::Theme) {
+        for (QTreeView *tree : trees) { MonitorStyleDelegate::applyPalette(tree); }
+    });
 
     connect(_aggMonitorFilterModel, &QAbstractItemModel::rowsInserted, this, &TraceWindow::onRowsInserted);
 
@@ -130,9 +122,6 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
         _altViewModels[i]->setTimestampMode(_timestampMode);
         _altFilterModels[i] = new TraceFilterModel(this);
         _altFilterModels[i]->setSourceModel(_altViewModels[i]);
-
-        QTreeView *tree = trees[i];
-        tree->setItemDelegateForColumn(BaseTraceViewModel::column_data, tree->itemDelegateForColumn(BaseTraceViewModel::column_data)); // reuse existing delegate
 
         connect(_altFilterModels[i], &QAbstractItemModel::rowsInserted, this, &TraceWindow::onRowsInserted);
     };
