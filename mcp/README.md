@@ -10,7 +10,8 @@ MCP 클라이언트 ──stdio/HTTP──> cangaroo_mcp.py ──TCP JSON-RPC�
                                                 127.0.0.1:52790
 ```
 
-- `src/remote`: cangaroo 안의 원격 제어 모듈이다. `CONFIG+=remote`로 빌드하고 `--remote`로 실행할 때만 켜진다.
+- `src/remote`: cangaroo 안의 원격 제어 모듈이다. `CONFIG+=remote`로 빌드하면 들어간다. 켜고 끄는 것은 MCP 메뉴(아래)나 `--remote` 옵션으로 한다.
+- `McpController`(`src/remote/McpController.*`): MCP 메뉴 뒤에서 원격 제어와 HTTP MCP 서버(`cangaroo_mcp.py`, 자식 프로세스)를 함께 켜고 끈다.
 - `cangaroo_mcp.py`: 공식 Python `mcp` SDK(2.x)로 만든 MCP 서버다. MCP 도구 호출을 JSON-RPC 요청으로 바꿔 전달한다.
 
 ## 준비
@@ -23,9 +24,32 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-## 실행
+## 실행: MCP 메뉴 (기본)
 
-먼저 cangaroo를 원격 제어 모드로 실행한다.
+cangaroo를 그냥 실행하면 MCP가 켜진다(기본값). UartTerminal의 MCP 메뉴와 같은 구성이다.
+
+| 메뉴 | 동작 |
+|---|---|
+| MCP → Enable MCP Server | 원격 제어(127.0.0.1:52790)와 HTTP MCP 서버(127.0.0.1:5400)를 켜고 끈다. 기본은 켜짐 |
+| MCP → AI Read-only (block transmit) | 송신 도구를 모두 막는다. 수신·상태 조회는 그대로 된다. 기본은 꺼짐(송신 허용) |
+| MCP → MCP Guide... | 지금 상태, 접속 주소, 등록 명령을 실제 설정값으로 보여 주고 복사 버튼을 둔다 |
+| MCP → Copy Registration Command | 아래 등록 명령을 클립보드에 넣는다 |
+
+```bash
+claude mcp add --transport http cangaroo http://127.0.0.1:5400/mcp
+```
+
+- 등록은 한 번만 한다. 기본 범위는 명령을 실행한 폴더(local)이고, 모든 폴더에서 쓰려면 `-s user`를 붙인다. 등록 뒤 새 Claude Code 세션부터 도구가 보인다.
+- 상태 표시줄 왼쪽 끝에 `MCP: on · HTTP 5400`처럼 상태가 나온다. 초록은 정상, 주황은 읽기 전용, 빨강은 문제(포트 사용 중, MCP 서버 없음, 실행 실패)다. 문제의 자세한 내용은 로그 창과 MCP Guide에 나온다.
+- 켜짐·읽기 전용 상태는 설정(`HKCU\Software\CANgaroo/Schildkroet\CANgaroo\mcp`)에 남아 다음 실행에도 이어진다. 포트는 같은 키의 `httpPort`(기본 5400), `remotePort`(기본 52790), 원격 버퍼는 `remoteBuffer`(기본 100000)로 바꾼다.
+- HTTP 서버는 `mcp\.venv\Scripts\python.exe`로 `cangaroo_mcp.py --transport http`를 띄운다. 실행 파일 폴더(`dist\`, `bin\`)의 옆이나 안에 있는 `mcp\`를 찾는다. 다른 곳이면 설정 `python`, `script`에 경로를 넣는다.
+- cangaroo가 내장 Python 때문에 자기 프로세스에 넣는 `PYTHONHOME`은 MCP 서버에 넘기지 않는다. 넘기면 venv Python이 시작하자마자 끝난다.
+- cangaroo를 닫거나 MCP를 끄면 MCP 서버 프로세스도 끝난다.
+- cangaroo를 두 개 띄우면 두 번째 것은 포트가 이미 쓰이고 있어 MCP가 켜지지 않는다(상태 표시줄 빨강). 두 번째 것을 닫아도 첫 번째 것의 접속 정보(`cangaroo-remote.json`)는 지우지 않는다.
+
+## 실행: 명령줄 옵션
+
+시험 스크립트처럼 실행 옵션으로 정할 수도 있다. `--remote`나 `--remote-port`를 주면 그 실행은 메뉴 설정 대신 옵션을 따르고, HTTP MCP 서버는 띄우지 않는다(띄운 쪽이 직접 띄운다). 메뉴로 끄고 켜는 것은 그대로 된다.
 
 ```bash
 dist\cangaroo.exe --remote --remote-allow-tx
@@ -98,13 +122,14 @@ STM32 로거 저장소의 `.test/hwtest/mcp_client.py`가 이 도구를 부른�
 - `can_send`도 CanTerminal처럼 ACK를 기다리지 않는다. 상대 노드가 없으면 cangaroo trace에 오류 프레임이 남는다.
 - CanTerminal의 로그 파일 모드와 XCP 명령 해석은 없다. `mode`는 항상 `live`다.
 
-실행은 `start_canterminal_compat.cmd` 하나로 한다. cangaroo를 `--remote --remote-allow-tx --remote-buffer 1000000`으로 띄우고,
-MCP 서버를 5400 포트로 띄운다. 그다음 cangaroo에서 비트레이트를 맞추고 [Start]를 누른다.
+cangaroo를 그냥 실행하면 MCP 메뉴 기본값으로 같은 주소(`http://127.0.0.1:5400/mcp`)에 이 도구가 열린다. 그다음 비트레이트를 맞추고 [Start]를 누른다.
+`start_canterminal_compat.cmd`도 그대로 쓸 수 있다. cangaroo를 `--remote --remote-allow-tx --remote-buffer 1000000`으로 띄우고 MCP 서버를 5400 포트로 직접 띄운다.
+두 방법을 함께 쓰면 먼저 뜬 쪽이 5400을 쓴다. 나중에 뜬 cangaroo는 상태 표시줄에 `HTTP 5400 in use`를 보이고, 5400의 서버는 탐색 파일을 따라 마지막에 원격 제어를 연 cangaroo에 붙는다.
 
 ## 사용할 때 주의할 점
 
 - 타이밍은 `latency_us`, `period_*_ms` 값으로 판정한다. 도구 호출 한 번에 수백 ms가 걸리므로 호출 간격으로 판정하면 안 된다.
 - 모든 프레임에는 계속 증가하는 `seq`가 붙는다. 결과의 `next`나 `cursor`를 다음 호출의 `since`로 넘기면 빠짐없이 이어서 읽을 수 있다.
 - `dropped: true`는 버퍼 크기를 넘어 오래된 프레임이 지워졌다는 뜻이다.
-- 실제 버스에 송신하면 연결된 ECU가 동작할 수 있다. `--remote-allow-tx`는 필요할 때만 켠다.
+- 실제 버스에 송신하면 연결된 ECU가 동작할 수 있다. 송신이 필요 없으면 MCP → AI Read-only를 켠다. 명령줄로 띄울 때는 `--remote-allow-tx`를 필요할 때만 준다.
 - 측정을 시작하면 어댑터가 버스에 ACK를 보낸다. 버스에 영향을 주지 않으려면 `listen_only=true`로 설정한다.

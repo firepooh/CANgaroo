@@ -55,6 +55,10 @@ class MainWindow;
 
 class ConfigurableWidget;
 class SetupDialog;
+class QLabel;
+#ifdef REMOTE_CONTROL
+class McpController;
+#endif
 
 class MainWindow : public QMainWindow
 {
@@ -67,6 +71,10 @@ public:
     bool isMaximizedWindow();
     bool isDarkMode();
     void loadWorkspaceFromFile(const QString &filename);
+#ifdef REMOTE_CONTROL
+    // MCP menu: remote control endpoint + MCP HTTP server, started by main().
+    [[nodiscard]] McpController *mcp() const { return _mcp; }
+#endif
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -113,6 +121,14 @@ private slots:
 private:
     Ui::MainWindow *ui;
     SetupDialog *_setupDlg = nullptr;
+#ifdef REMOTE_CONTROL
+    McpController *_mcp = nullptr;
+    QLabel *_mcpStatusLabel = nullptr;
+    QAction *_actMcpEnabled = nullptr;
+    QAction *_actMcpReadOnly = nullptr;
+    void initMcp();
+    void refreshMcpUi();
+#endif
     QSettings settings;
 
     bool _workspaceModified = false;

@@ -40,6 +40,7 @@
 #include <QDesktopServices>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QClipboard>
 
 #include "core/MeasurementSetup.h"
 #include "core/MeasurementNetwork.h"
@@ -65,6 +66,11 @@
 #include "window/SettingsDialog/SettingsDialog.h"
 #include "window/RecordingDialog/RecordingDialog.h"
 #include "helpers/apphelpers.h"
+
+#ifdef REMOTE_CONTROL
+#include "remote/McpController.h"
+#include "remote/McpGuideDialog.h"
+#endif
 
 #include "driver/SLCANDriver/SLCANDriver.h"
 #include "driver/GrIPDriver/GrIPDriver.h"
@@ -116,6 +122,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
 
     initVersion();
     initActions();
+#ifdef REMOTE_CONTROL
+    initMcp();
+#endif
     initDrivers();
     initGeometry();
     initWorkspace();
@@ -124,8 +133,84 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
 
 MainWindow::~MainWindow()
 {
+#ifdef REMOTE_CONTROL
+    // Before the windows and drivers: the endpoint and the MCP server process go first.
+    delete _mcp;
+    _mcp = nullptr;
+#endif
     delete ui;
 }
+
+#ifdef REMOTE_CONTROL
+void MainWindow::initMcp()
+{
+    _mcp = new McpController(backend(), this);
+
+    // Same layout as UartTerminal's MCP menu.
+    auto *menu = new QMenu(tr("&MCP"), this);
+    menuBar()->insertMenu(ui->menuHelp->menuAction(), menu);
+
+    _actMcpEnabled = menu->addAction(tr("&Enable MCP Server"));
+    _actMcpEnabled->setCheckable(true);
+    connect(_actMcpEnabled, &QAction::triggered, this, [this](bool checked) { _mcp->setEnabled(checked); });
+
+    _actMcpReadOnly = menu->addAction(tr("AI &Read-only (block transmit)"));
+    _actMcpReadOnly->setCheckable(true);
+    connect(_actMcpReadOnly, &QAction::triggered, this, [this](bool checked) { _mcp->setReadOnly(checked); });
+
+    menu->addSeparator();
+    menu->addAction(tr("MCP &Guide..."), this, [this]()
+    {
+        McpGuideDialog dlg(*_mcp, this);
+        dlg.exec();
+    });
+    menu->addAction(tr("&Copy Registration Command (claude mcp add)"), this, [this]()
+    {
+        QGuiApplication::clipboard()->setText(_mcp->registrationCommand());
+        statusBar()->showMessage(tr("Copied: %1").arg(_mcp->registrationCommand()), 6000);
+    });
+
+    _mcpStatusLabel = new QLabel(this);
+    _mcpStatusLabel->setContentsMargins(6, 0, 12, 0);
+    statusBar()->insertPermanentWidget(0, _mcpStatusLabel);
+
+    connect(_mcp, &McpController::stateChanged, this, &MainWindow::refreshMcpUi);
+    refreshMcpUi();
+}
+
+void MainWindow::refreshMcpUi()
+{
+    if (!_mcp) { return; }
+    _actMcpEnabled->setChecked(_mcp->isEnabled());
+    _actMcpReadOnly->setChecked(_mcp->isReadOnly());
+
+    using State = McpController::HttpState;
+    const bool dark = ThemeManager::instance().isDarkMode();
+    QString color;
+    if (!_mcp->isEnabled())
+    {
+        color = dark ? "#9e9e9e" : "#757575";
+    }
+    else if (!_mcp->remoteListening() || _mcp->httpState() == State::PortInUse
+             || _mcp->httpState() == State::PythonMissing || _mcp->httpState() == State::Failed)
+    {
+        color = dark ? "#ef5350" : "#c62828";
+    }
+    else if (_mcp->isReadOnly())
+    {
+        color = dark ? "#ffb74d" : "#b26a00";
+    }
+    else
+    {
+        color = dark ? "#66bb6a" : "#2e7d32";
+    }
+    _mcpStatusLabel->setText(_mcp->statusText());
+    _mcpStatusLabel->setStyleSheet(QStringLiteral("color: %1; font-weight: bold;").arg(color));
+    _mcpStatusLabel->setToolTip(_mcp->lastProblem().isEmpty()
+                                    ? tr("MCP endpoint %1\nRegister: %2").arg(_mcp->endpoint(), _mcp->registrationCommand())
+                                    : _mcp->lastProblem());
+}
+#endif
 
 void MainWindow::initVersion()
 {

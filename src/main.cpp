@@ -30,10 +30,7 @@
 #include <QTranslator>
 
 #ifdef REMOTE_CONTROL
-#include <memory>
-
-#include "core/Backend.h"
-#include "remote/RemoteServer.h"
+#include "remote/McpController.h"
 #endif
 
 
@@ -126,20 +123,21 @@ int main(int argc, char *argv[])
     }
 
 #ifdef REMOTE_CONTROL
-    // Declared after w, so it is destroyed before the main window and its drivers.
-    std::unique_ptr<RemoteServer> remote;
-    if (parser.isSet(remoteOption) || parser.isSet(remotePortOption))
+    // Without --remote the MCP menu settings decide (enabled by default). With it,
+    // the command line decides this run, as before (test scripts rely on it).
+    // The main window owns the controller and stops it before its drivers.
+    McpController::CommandLine commandLine;
+    commandLine.remote = parser.isSet(remoteOption) || parser.isSet(remotePortOption);
+    if (commandLine.remote)
     {
-        RemoteServer::Options options;
+        RemoteServer::Options &options = commandLine.options;
         options.port = static_cast<quint16>(parser.value(remotePortOption).toUInt());
         options.token = parser.value(remoteTokenOption);
         if (options.token.isEmpty()) { options.token = qEnvironmentVariable("CANGAROO_REMOTE_TOKEN"); }
         options.allowTx = parser.isSet(remoteAllowTxOption);
         options.frameLogCapacity = std::max(1000, parser.value(remoteBufferOption).toInt());
-
-        remote = std::make_unique<RemoteServer>(Backend::instance(), options);
-        remote->start();
     }
+    w.mcp()->startup(commandLine);
 #endif
 
     return a.exec();

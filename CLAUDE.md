@@ -86,8 +86,9 @@ qmake6 CONFIG+=kvaser CONFIG+=peakcan
 
 - `CONFIG+=peakcan` — enables PeakCAN driver (Windows only, needs PCAN-Basic SDK)
 - `CONFIG+=kvaser` — enables Kvaser driver (needs CANlib SDK)
-- `CONFIG+=remote` — localhost JSON-RPC control endpoint in `src/remote/` (started with `--remote`),
-  used by the MCP server in `mcp/`. `Build_Local.cmd` (Windows) builds with it enabled
+- `CONFIG+=remote` — localhost JSON-RPC control endpoint in `src/remote/`, used by the MCP server in `mcp/`.
+  `Build_Local.cmd` (Windows) builds with it enabled. The MCP menu (`McpController`) starts the endpoint and
+  `mcp/cangaroo_mcp.py --transport http` (port 5400) on startup by default; `--remote*` options override it for one run
 
 ### Platform-specific drivers
 
