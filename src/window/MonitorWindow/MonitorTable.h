@@ -75,6 +75,7 @@ private:
     QLineEdit *_editor = nullptr;
     uint64_t _editId = 0;
     QTimer _activityTimer;
+    QTimer _fadeTimer;
 
     // Paint statistics, logged every 5 s when CANGAROO_MONITOR_STATS=1
     bool _statsEnabled = false;
@@ -122,9 +123,10 @@ private:
         QColor text;
         QColor selectedText;
         QColor error;
-        QColor changed;
         QColor tx;
         QColor branch;
+        QColor base;            // background of a line, and of a selected line
+        QColor selection;
         const QFont *currentFont = nullptr;
         QRgb currentPen = 0;
         bool penValid = false;
@@ -137,6 +139,8 @@ private:
     void paintChildLine(PaintContext &ctx, const MonitorBuffer::Entry &e, int childLine, int y, bool selected);
     void drawText(PaintContext &ctx, const QPoint &pos, const QString &text, bool mono) const;
     void drawCell(PaintContext &ctx, int x, int y, int width, const QString &text, int align, bool mono) const;
-    void drawHex(PaintContext &ctx, int x, int y, int width, const QString &hex, uint64_t mask,
-                 const QColor &normal, bool elide) const;
+    void drawHex(PaintContext &ctx, int x, int y, int width, const QString &hex, const MonitorBuffer::Entry &e,
+                 int firstByte, const QColor &normal, const QColor &background, bool elide) const;
+    // Repaints the visible lines of the entries for which `pick` is true
+    template<typename Pick> void updateEntries(Pick pick);
 };

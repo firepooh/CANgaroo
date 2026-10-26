@@ -363,6 +363,40 @@ bool MonitorBuffer::isActive(const Entry &entry, int64_t nowUs) const
     return nowUs - entry.msg.getTimestamp_us() <= limitUs;
 }
 
+int64_t MonitorBuffer::nowUs()
+{
+    return QDateTime::currentMSecsSinceEpoch() * 1000;
+}
+
+double MonitorBuffer::countHighlight(const Entry &entry, int64_t nowUs) const
+{
+    if (_mode != Mode::Fixed || entry.receivedUs == 0) { return 0.0; }
+    const int64_t age = nowUs - entry.receivedUs;
+    return age >= count_fade_us ? 0.0 : 1.0 - static_cast<double>(std::max<int64_t>(0, age)) / count_fade_us;
+}
+
+double MonitorBuffer::byteHighlight(const Entry &entry, int byte, int64_t nowUs) const
+{
+    if (_mode == Mode::Scroll) {
+        // A scroll line is a snapshot: mark the bytes that differ from the previous frame, no fading
+        return byte < 64 && ((changedMask(entry) >> byte) & 1ULL) ? 0.5 : 0.0;
+    }
+    if (byte < 0 || byte >= static_cast<int>(entry.byteChangedUs.size())) { return 0.0; }
+    const int64_t changed = entry.byteChangedUs[byte];
+    if (changed == 0) { return 0.0; }
+    const int64_t age = nowUs - changed;
+    return age >= byte_fade_us ? 0.0 : 1.0 - static_cast<double>(std::max<int64_t>(0, age)) / byte_fade_us;
+}
+
+bool MonitorBuffer::isFading(const Entry &entry, int64_t nowUs) const
+{
+    if (_mode != Mode::Fixed) { return false; }
+    // A little longer than the fade, so the last repaint clears the highlight
+    constexpr int64_t grace_us = 200000;
+    return (entry.receivedUs != 0 && nowUs - entry.receivedUs < count_fade_us + grace_us)
+        || (entry.bytesChangedUs != 0 && nowUs - entry.bytesChangedUs < byte_fade_us + grace_us);
+}
+
 uint64_t MonitorBuffer::changedMask(const Entry &entry)
 {
     const BusMessage &cur = entry.msg;
@@ -501,6 +535,8 @@ void MonitorBuffer::processNewMessages()
 void MonitorBuffer::processFixed(int size)
 {
     BusTrace *trace = _backend.getTrace();
+    // Highlights fade from the time the frames reach the view, not from their bus time
+    const int64_t now = nowUs();
 
     for (int i = _lastProcessed + 1; i < size; ++i) {
         const BusMessage msg = trace->getMessage(i);
@@ -510,6 +546,16 @@ void MonitorBuffer::processFixed(int size)
             const bool changed = msg.getLength() != e->msg.getLength()
                 || std::memcmp(msg.getData(), e->msg.getData(), msg.getLength()) != 0;
             e->deltaUs = msg.getTimestamp_us() - e->msg.getTimestamp_us();
+            if (changed && !msg.isErrorFrame()) {
+                const int len = msg.getLength();
+                const int oldLen = e->msg.getLength();
+                e->byteChangedUs.resize(len, 0);
+                for (int b = 0; b < len; ++b) {
+                    if (b >= oldLen || msg.getData()[b] != e->msg.getData()[b]) { e->byteChangedUs[b] = now; }
+                }
+                e->bytesChangedUs = now;
+            }
+            e->receivedUs = now;
             e->prev = e->msg;
             e->msg = msg;
             ++e->count;
@@ -528,6 +574,8 @@ void MonitorBuffer::processFixed(int size)
             entry->dataLines = dataLineCount(msg);
             entry->signalLines = signalCount(msg);
             entry->expanded = _expandNew;
+            entry->receivedUs = now;
+            entry->byteChangedUs.assign(msg.getLength(), 0);
 
             const auto pos = std::upper_bound(_entries.begin(), _entries.end(), msg,
                 [](const BusMessage &m, const std::unique_ptr<Entry> &r) { return sortsBefore(m, r->msg); });

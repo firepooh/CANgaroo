@@ -79,6 +79,9 @@ public:
     static constexpr int refresh_max_ms = 100;
     static constexpr int refresh_default_ms = 20;
     static constexpr int trace_flush_max_ms = 50;   // upstream BusTrace flush interval
+    // Highlights fade out over these times, like the message view of Vehicle Spy
+    static constexpr int64_t count_fade_us = 2000000;
+    static constexpr int64_t byte_fade_us = 3000000;
 
     struct Entry
     {
@@ -91,6 +94,10 @@ public:
         int dataLines = 0;
         int signalLines = 0;
         bool expanded = true;
+        // Fixed mode highlights: host time of the last frame and of each data byte's last change
+        int64_t receivedUs = 0;
+        int64_t bytesChangedUs = 0;               // newest of byteChangedUs
+        std::vector<int64_t> byteChangedUs;
 
         [[nodiscard]] int childLines() const { return dataLines + signalLines; }
         [[nodiscard]] int lineCount() const { return 1 + (expanded ? childLines() : 0); }
@@ -133,6 +140,12 @@ public:
     [[nodiscard]] QString typeString(const BusMessage &msg) const;
     [[nodiscard]] bool isActive(const Entry &entry, int64_t nowUs) const;
     [[nodiscard]] static uint64_t changedMask(const Entry &entry);
+    // Highlight strength 1 (just changed) .. 0 (faded out) of the count and of one data byte
+    [[nodiscard]] double countHighlight(const Entry &entry, int64_t nowUs) const;
+    [[nodiscard]] double byteHighlight(const Entry &entry, int byte, int64_t nowUs) const;
+    // True while a highlight of the entry is still fading, i.e. it needs repainting over time
+    [[nodiscard]] bool isFading(const Entry &entry, int64_t nowUs) const;
+    [[nodiscard]] static int64_t nowUs();
 
     [[nodiscard]] const QHash<QString, QString> &memos() const { return _memos; }
     void setMemos(const QHash<QString, QString> &memos);

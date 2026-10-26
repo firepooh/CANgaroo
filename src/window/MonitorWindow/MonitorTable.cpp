@@ -88,6 +88,24 @@ namespace
 {
 
 constexpr int cell_padding = 4;
+
+// Highlight colours at full strength; they fade into the line background
+const QColor count_highlight(128, 128, 128);
+const QColor byte_highlight(0, 0, 255);
+
+QColor blend(const QColor &from, const QColor &to, double strength)
+{
+    const double k = std::clamp(strength, 0.0, 1.0);
+    return QColor::fromRgbF(static_cast<float>(to.redF() * (1.0 - k) + from.redF() * k),
+                            static_cast<float>(to.greenF() * (1.0 - k) + from.greenF() * k),
+                            static_cast<float>(to.blueF() * (1.0 - k) + from.blueF() * k));
+}
+
+// White text on a dark highlight, the normal text colour on a light one
+bool isDark(const QColor &c)
+{
+    return 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue() < 140;
+}
 constexpr int branch_width = 16;   // expand arrow area in the first visible column
 constexpr int child_indent = 28;   // child lines start this far into the first visible column
 
@@ -139,6 +157,16 @@ MonitorTable::MonitorTable(MonitorBuffer *buffer, QWidget *parent)
         }
     });
     _activityTimer.start();
+
+    // Fading highlights change without new frames: repaint just those entries, 20 times a second
+    _fadeTimer.setInterval(50);
+    connect(&_fadeTimer, &QTimer::timeout, this, [this]()
+    {
+        if (!isVisible() || _buffer->mode() != MonitorBuffer::Mode::Fixed) { return; }
+        const int64_t now = MonitorBuffer::nowUs();
+        updateEntries([this, now](const MonitorBuffer::Entry &e) { return _buffer->isFading(e, now); });
+    });
+    _fadeTimer.start();
 
     _statsEnabled = qEnvironmentVariableIntValue("CANGAROO_MONITOR_STATS") >= 1;
     if (_statsEnabled) {
@@ -255,23 +283,28 @@ void MonitorTable::updateScrollBars()
     horizontalScrollBar()->setRange(0, std::max(0, _header->length() - width));
 }
 
+template<typename Pick>
+void MonitorTable::updateEntries(Pick pick)
+{
+    QRegion dirty;
+    const int width = viewport()->width();
+    auto [index, sub] = _buffer->entryAtLine(verticalScrollBar()->value());
+    int y = -sub * _rowHeight;
+    for (; index >= 0 && index < _buffer->entryCount() && y < viewport()->height(); ++index) {
+        const MonitorBuffer::Entry &e = _buffer->entry(index);
+        const int h = e.lineCount() * _rowHeight;
+        if (pick(e)) { dirty += QRect(0, std::max(0, y), width, h + std::min(0, y)); }
+        y += h;
+    }
+    if (!dirty.isEmpty()) { viewport()->update(dirty); }
+}
+
 void MonitorTable::onBufferChanged(int removedFrontLines)
 {
     if (!_buffer->takeChanges(_touched)) {
         // Only frames of existing entries: repaint just their visible lines
         if (_touched.isEmpty() || !isVisible()) { return; }
-        QRegion dirty;
-        const int first = verticalScrollBar()->value();
-        const int width = viewport()->width();
-        auto [index, sub] = _buffer->entryAtLine(first);
-        int y = -sub * _rowHeight;
-        for (; index >= 0 && index < _buffer->entryCount() && y < viewport()->height(); ++index) {
-            const MonitorBuffer::Entry &e = _buffer->entry(index);
-            const int h = e.lineCount() * _rowHeight;
-            if (_touched.contains(&e)) { dirty += QRect(0, std::max(0, y), width, h + std::min(0, y)); }
-            y += h;
-        }
-        if (!dirty.isEmpty()) { viewport()->update(dirty); }
+        updateEntries([this](const MonitorBuffer::Entry &e) { return _touched.contains(&e); });
         return;
     }
 
@@ -389,11 +422,12 @@ void MonitorTable::paintEvent(QPaintEvent *event)
         .text = palette().color(QPalette::Text),
         .selectedText = dark ? palette().color(QPalette::HighlightedText) : QColor(Qt::black),
         .error = dark ? QColor(255, 110, 110) : QColor(200, 0, 0),
-        .changed = dark ? QColor(255, 150, 60) : QColor(205, 85, 0),
         .tx = dark ? QColor(110, 170, 255) : QColor(0, 80, 200),
         .branch = palette().color(QPalette::Mid),
+        .base = palette().color(QPalette::Base),
+        .selection = dark ? palette().color(QPalette::Highlight) : QColor(200, 245, 195),
     };
-    const QColor selectionColor = dark ? palette().color(QPalette::Highlight) : QColor(200, 245, 195);
+    const QColor selectionColor = ctx.selection;
 
     auto [entryIndex, sub] = _buffer->entryAtLine(first);
     for (int y = 0; y < area.height() && entryIndex >= 0 && entryIndex < _buffer->entryCount(); y += _rowHeight) {
@@ -454,13 +488,21 @@ void MonitorTable::drawText(PaintContext &ctx, const QPoint &pos, const QString 
     QList<quint32> glyphs = raw.isValid() ? raw.glyphIndexesForString(text) : QList<quint32>();
     const bool fast = !glyphs.isEmpty() && !glyphs.contains(0u);
     if (fast) {
-        const QList<QPointF> advances = raw.advancesForGlyphIndexes(glyphs);
         QList<QPointF> positions;
         positions.reserve(glyphs.size());
-        qreal x = 0;
-        for (const QPointF &advance : advances) {
-            positions.append(QPointF(x, 0));
-            x += advance.x();
+        if (mono) {
+            // Whole-pixel character cells: highlight boxes and elision count with
+            // _monoCharWidth, and the font's own advance is a fraction off from it
+            for (qsizetype i = 0; i < glyphs.size(); ++i) {
+                positions.append(QPointF(static_cast<qreal>(i * _monoCharWidth), 0));
+            }
+        } else {
+            const QList<QPointF> advances = raw.advancesForGlyphIndexes(glyphs);
+            qreal x = 0;
+            for (const QPointF &advance : advances) {
+                positions.append(QPointF(x, 0));
+                x += advance.x();
+            }
         }
         QGlyphRun run;
         run.setRawFont(raw);
@@ -544,8 +586,22 @@ void MonitorTable::paintMessageLine(PaintContext &ctx, const MonitorBuffer::Entr
         if (w <= 0) { continue; }
 
         if (c.column == MonitorBuffer::col_data && !error) {
-            drawHex(ctx, x, y, w, _buffer->dataHex(e), MonitorBuffer::changedMask(e), textColor, true);
+            drawHex(ctx, x, y, w, _buffer->dataHex(e), e, 0, textColor, selected ? ctx.selection : ctx.base, true);
             continue;
+        }
+
+        if (c.column == MonitorBuffer::col_count) {
+            // The count gets a grey box while frames arrive, fading out when they stop
+            const double strength = _buffer->countHighlight(e, ctx.nowUs);
+            if (strength > 0.0) {
+                const QString text = _buffer->text(e, c.column);
+                const int tw = std::min(w, ctx.uiFm.horizontalAdvance(text));
+                const QColor bg = blend(count_highlight, selected ? ctx.selection : ctx.base, strength);
+                p.fillRect(QRect(x + w - tw - 3, y + 1, tw + 6, _rowHeight - 2), bg);
+                ctx.setPen(isDark(bg) ? QColor(Qt::white) : textColor);
+                drawCell(ctx, x, y, w, text, Qt::AlignRight, false);
+                continue;
+            }
         }
 
         if (c.column == MonitorBuffer::col_time && _buffer->mode() == MonitorBuffer::Mode::Fixed) {
@@ -595,21 +651,21 @@ void MonitorTable::paintChildLine(PaintContext &ctx, const MonitorBuffer::Entry 
     if (childLine < e.dataLines) {
         const QString prefix = _buffer->dataLinePrefix(e, childLine);
         drawText(ctx, QPoint(x, y + ctx.monoBaseline), prefix, true);
-        const uint64_t mask = (MonitorBuffer::changedMask(e) >> (childLine * MonitorBuffer::data_line_bytes))
-                            & ((1ULL << MonitorBuffer::data_line_bytes) - 1);
         const int hexX = x + static_cast<int>(prefix.size()) * _monoCharWidth;
-        drawHex(ctx, hexX, y, ctx.width - hexX, _buffer->dataLineHex(e, childLine), mask, textColor, false);
+        drawHex(ctx, hexX, y, ctx.width - hexX, _buffer->dataLineHex(e, childLine), e,
+                childLine * MonitorBuffer::data_line_bytes, textColor, selected ? ctx.selection : ctx.base, false);
         return;
     }
 
     drawCell(ctx, x, y, width, _buffer->signalText(e, childLine - e.dataLines), Qt::AlignLeft, false);
 }
 
-void MonitorTable::drawHex(PaintContext &ctx, int x, int y, int width, const QString &hex, uint64_t mask,
-                           const QColor &normal, bool elide) const
+void MonitorTable::drawHex(PaintContext &ctx, int x, int y, int width, const QString &hex, const MonitorBuffer::Entry &e,
+                           int firstByte, const QColor &normal, const QColor &background, bool elide) const
 {
-    // Byte i occupies characters 3i and 3i+1 of "AB CD EF"; with a fixed-pitch font the
-    // changed bytes are drawn as a second string with everything else blanked out
+    // Byte i occupies characters 3i and 3i+1 of "AB CD EF". A changed byte gets a blue
+    // box that fades out; bytes on a dark box are drawn as a second, white string with
+    // everything else blanked out (the font is fixed-pitch, so the columns line up).
     QString shown = hex;
     bool cut = false;
     const int maxChars = width / _monoCharWidth;
@@ -619,15 +675,18 @@ void MonitorTable::drawHex(PaintContext &ctx, int x, int y, int width, const QSt
     }
 
     QString normalText = shown;
-    QString changedText;
-    if (mask != 0) {
-        changedText = QString(shown.size(), QLatin1Char(' '));
-        for (int i = 0; i < 64 && 3 * i < shown.size(); ++i) {
-            if (!((mask >> i) & 1ULL)) { continue; }
-            for (int k = 3 * i; k < 3 * i + 2 && k < shown.size(); ++k) {
-                changedText[k] = shown[k];
-                normalText[k] = QLatin1Char(' ');
-            }
+    QString whiteText;
+    for (int i = 0; 3 * i < shown.size(); ++i) {
+        const double strength = _buffer->byteHighlight(e, firstByte + i, ctx.nowUs);
+        if (strength <= 0.0) { continue; }
+        const QColor bg = blend(byte_highlight, background, strength);
+        const int chars = std::min<int>(2, static_cast<int>(shown.size()) - 3 * i);
+        ctx.p.fillRect(QRect(x + 3 * i * _monoCharWidth - 1, y + 1, chars * _monoCharWidth + 2, _rowHeight - 2), bg);
+        if (!isDark(bg)) { continue; }
+        if (whiteText.isEmpty()) { whiteText = QString(shown.size(), QLatin1Char(' ')); }
+        for (int k = 3 * i; k < 3 * i + chars; ++k) {
+            whiteText[k] = shown[k];
+            normalText[k] = QLatin1Char(' ');
         }
     }
     if (cut) { normalText += QChar(0x2026); }
@@ -635,9 +694,9 @@ void MonitorTable::drawHex(PaintContext &ctx, int x, int y, int width, const QSt
     const QPoint pos(x, y + ctx.monoBaseline);
     ctx.setPen(normal);
     drawText(ctx, pos, normalText, true);
-    if (!changedText.isEmpty()) {
-        ctx.setPen(ctx.changed);
-        drawText(ctx, pos, changedText, true);
+    if (!whiteText.isEmpty()) {
+        ctx.setPen(QColor(Qt::white));
+        drawText(ctx, pos, whiteText, true);
     }
 }
 
