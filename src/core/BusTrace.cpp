@@ -187,6 +187,13 @@ void BusTrace::setMaxSize(int maxSize)
     _maxSize = maxSize;
 }
 
+void BusTrace::setFlushInterval(int ms)
+{
+    // Coarse timers on Windows tick in about 15.6 ms steps
+    _flushTimer.setTimerType(ms < 50 ? Qt::PreciseTimer : Qt::CoarseTimer);
+    _flushTimer.setInterval(ms);
+}
+
 void BusTrace::startTimer()
 {
     QMutexLocker locker(&_timerMutex);

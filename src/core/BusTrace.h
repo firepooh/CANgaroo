@@ -53,6 +53,9 @@ public:
     QVector<BusMessage> getSnapshot(int maxCount = 0);
     void enqueueMessage(const BusMessage &msg, bool more_to_follow=false);
     void setMaxSize(int maxSize);
+    // How long enqueued frames wait before they are appended in one batch (main thread only)
+    void setFlushInterval(int ms);
+    [[nodiscard]] int flushInterval() const { return _flushTimer.interval(); }
 
     // Writes the whole trace in `format`; see core/TraceFileWriter.
     void save(QFile &file, TraceFileFormat format);
