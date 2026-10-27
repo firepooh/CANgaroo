@@ -42,7 +42,8 @@ CandleApiInterface::CandleApiInterface(CandleApiDriver *driver,
     _numRxOverruns(0)
 {
     _settings.setBitrate(500000);
-    _settings.setSamplePoint(875);
+    _settings.setSamplePoint(800);
+    _settings.setFdSamplePoint(800);
 
 
     // Timings for 170MHz processors (CANable 2.0)

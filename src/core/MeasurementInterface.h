@@ -118,6 +118,12 @@ public:
     unsigned fdSamplePoint() const;
     void setFdSamplePoint(unsigned fdSamplePoint);
 
+    // New interfaces: use this sample point for the nominal and the CAN FD data
+    // phase where the adapter offers it at the configured bitrates, and keep the
+    // current ones where it does not (adapters without 80 % rows).
+    void preferSamplePoints(const QList<CanTiming> &timings, unsigned samplePoint);
+    static constexpr unsigned k_preferredSamplePoint = 800;   // 80 %, CiA 601 for CAN FD
+
     bool doAutoRestart() const;
     void setAutoRestart(bool doAutoRestart);
 

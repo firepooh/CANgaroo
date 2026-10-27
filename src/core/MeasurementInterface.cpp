@@ -288,6 +288,22 @@ void MeasurementInterface::setFdSamplePoint(unsigned fdSamplePoint)
     _fdSamplePoint = fdSamplePoint;
 }
 
+void MeasurementInterface::preferSamplePoints(const QList<CanTiming> &timings, unsigned samplePoint)
+{
+    bool nominal = false;
+    bool data = false;
+    for (CanTiming t : timings) {
+        if (t.getBitrate() == _bitrate && t.getSamplePoint() == samplePoint) {
+            nominal = true;
+        }
+        if (t.getBitrateFD() == _fdBitrate && t.getSamplePointFD() == samplePoint) {
+            data = true;
+        }
+    }
+    if (nominal) { _samplePoint = samplePoint; }
+    if (data) { _fdSamplePoint = samplePoint; }
+}
+
 bool MeasurementInterface::doAutoRestart() const
 {
     return _doAutoRestart;

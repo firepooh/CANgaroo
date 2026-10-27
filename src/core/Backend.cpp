@@ -181,6 +181,9 @@ void Backend::loadDefaultSetup(MeasurementSetup &setup)
                 mi->setBusType(canIntf->busType());
             mi->setBitrate(500000);
             mi->setFdBitrate(2000000);
+            if (canIntf) {
+                mi->preferSamplePoints(canIntf->getAvailableBitrates(), MeasurementInterface::k_preferredSamplePoint);
+            }
             network->addInterface(mi);
         }
     }

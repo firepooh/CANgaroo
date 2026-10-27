@@ -256,8 +256,10 @@ SetupDialogTreeItem *SetupDialogTreeModel::addInterface(const QModelIndex &paren
         MeasurementInterface *mi = parentItem->network->addBusInterface(interface);
         // Propagate the actual bus type (e.g. LIN) from the underlying interface
         BusInterface *canIntf = _backend->getInterfaceById(interface);
-        if (canIntf)
+        if (canIntf) {
             mi->setBusType(canIntf->busType());
+            mi->preferSamplePoints(canIntf->getAvailableBitrates(), MeasurementInterface::k_preferredSamplePoint);
+        }
         item = loadMeasurementInterface(*parentItem, mi);
         endInsertRows();
     }
