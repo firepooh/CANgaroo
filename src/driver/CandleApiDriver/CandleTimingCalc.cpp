@@ -25,7 +25,8 @@
 namespace
 {
 
-std::optional<CandleNominalTiming> withBrp(uint32_t clock, uint32_t bitrate, uint32_t samplePoint, uint32_t brp)
+std::optional<CandleNominalTiming> withBrp(uint32_t clock, uint32_t bitrate, uint32_t samplePoint, uint32_t brp,
+                                           const CandleTimingLimits &limits)
 {
     const double tqExact = static_cast<double>(clock) / (static_cast<double>(brp) * bitrate);
     const auto tq = static_cast<uint32_t>(std::lround(tqExact));
@@ -46,7 +47,7 @@ std::optional<CandleNominalTiming> withBrp(uint32_t clock, uint32_t bitrate, uin
     t.brp = brp;
     t.phaseSeg1 = beforeSample - 2;
     t.phaseSeg2 = tq - beforeSample;
-    if (1 + t.phaseSeg1 > CandleTimingCalc::k_maxTseg1 || t.phaseSeg2 > CandleTimingCalc::k_maxPhaseSeg2) {
+    if (1 + t.phaseSeg1 > limits.maxTseg1 || t.phaseSeg2 > limits.maxPhaseSeg2) {
         return std::nullopt;
     }
     return t;
@@ -54,14 +55,17 @@ std::optional<CandleNominalTiming> withBrp(uint32_t clock, uint32_t bitrate, uin
 
 } // namespace
 
-std::optional<CandleNominalTiming> CandleTimingCalc::nominal(uint32_t clock, uint32_t bitrate, uint32_t samplePoint)
+std::optional<CandleNominalTiming> CandleTimingCalc::nominal(uint32_t clock, uint32_t bitrate, uint32_t samplePoint,
+                                                             const CandleTimingLimits &limits)
 {
     if (clock == 0 || bitrate == 0 || samplePoint == 0 || samplePoint >= 1000) { return std::nullopt; }
 
-    if (auto t = withBrp(clock, bitrate, samplePoint, k_preferredBrp)) { return t; }
-    for (uint32_t brp = 1; brp <= k_maxBrp; ++brp) {
+    if (k_preferredBrp <= limits.maxBrp) {
+        if (auto t = withBrp(clock, bitrate, samplePoint, k_preferredBrp, limits)) { return t; }
+    }
+    for (uint32_t brp = 1; brp <= limits.maxBrp; ++brp) {
         if (brp == k_preferredBrp) { continue; }
-        if (auto t = withBrp(clock, bitrate, samplePoint, brp)) { return t; }
+        if (auto t = withBrp(clock, bitrate, samplePoint, brp, limits)) { return t; }
     }
     return std::nullopt;
 }
@@ -69,7 +73,8 @@ std::optional<CandleNominalTiming> CandleTimingCalc::nominal(uint32_t clock, uin
 std::vector<CandleNominalTiming> CandleTimingCalc::missing(uint32_t clock,
                                                            const std::vector<uint32_t> &bitrates,
                                                            const std::vector<uint32_t> &samplePoints,
-                                                           const std::vector<std::pair<uint32_t, uint32_t>> &existing)
+                                                           const std::vector<std::pair<uint32_t, uint32_t>> &existing,
+                                                           const CandleTimingLimits &limits)
 {
     std::vector<CandleNominalTiming> result;
     for (uint32_t bitrate : bitrates) {
@@ -77,7 +82,7 @@ std::vector<CandleNominalTiming> CandleTimingCalc::missing(uint32_t clock,
             if (std::find(existing.begin(), existing.end(), std::make_pair(bitrate, sp)) != existing.end()) {
                 continue;
             }
-            if (auto t = nominal(clock, bitrate, sp)) { result.push_back(*t); }
+            if (auto t = nominal(clock, bitrate, sp, limits)) { result.push_back(*t); }
         }
     }
     return result;

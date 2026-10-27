@@ -129,6 +129,48 @@ private slots:
         };
         QCOMPARE(pairs, expected);
     }
+
+    // 80 MHz (CANnectivity, ESP32-S31 TWAI-FD), limits TSEG1 190, phase_seg2 63, BRP 255
+    void clock80MHzWithinTwaiLimits()
+    {
+        constexpr uint32_t clock = 80000000;
+        const CandleTimingLimits &lim = CandleTimingCalc::k_80MHzLimits;
+        for (uint32_t br : k_bitrates) {
+            for (uint32_t sp : k_samplePoints) {
+                const auto t = CandleTimingCalc::nominal(clock, br, sp, lim);
+                // 800k 87.5 %: 80 MHz / 800k = 100 tq per bit, 87.5 % needs a multiple of 8 tq
+                if (br == 800000 && sp == 875) {
+                    QVERIFY(!t.has_value());
+                    continue;
+                }
+                QVERIFY2(t.has_value(), qPrintable(QString("%1 bit/s %2").arg(br).arg(sp)));
+                const uint32_t tq = 2 + t->phaseSeg1 + t->phaseSeg2;
+                const double actual = double(clock) / (double(t->brp) * tq);
+                QVERIFY2(std::fabs(actual - br) < 1.0, qPrintable(QString("%1 -> %2").arg(br).arg(actual)));
+                QCOMPARE((2 + t->phaseSeg1) * 1000, sp * tq);
+                QVERIFY(1 + t->phaseSeg1 <= 190);
+                QVERIFY(t->phaseSeg2 >= 1 && t->phaseSeg2 <= 63);
+                QVERIFY(t->brp >= 1 && t->brp <= 255);
+            }
+        }
+    }
+
+    void clock80MHzBenchRows()
+    {
+        // 500k 80 % (bench nominal rate): BRP 2, 80 tq, 1 + 1 + 62 + 16
+        auto t = CandleTimingCalc::nominal(80000000, 500000, 800, CandleTimingCalc::k_80MHzLimits);
+        QVERIFY(t);
+        QCOMPARE(t->brp, 2u);
+        QCOMPARE(t->phaseSeg1, 62u);
+        QCOMPARE(t->phaseSeg2, 16u);
+
+        // 10k 80 %: BRP 32 gives 250 tq, but TSEG1 199 > 190, so BRP 40, 200 tq, 158 / 40
+        t = CandleTimingCalc::nominal(80000000, 10000, 800, CandleTimingCalc::k_80MHzLimits);
+        QVERIFY(t);
+        QCOMPARE(t->brp, 40u);
+        QCOMPARE(t->phaseSeg1, 158u);
+        QCOMPARE(t->phaseSeg2, 40u);
+    }
 };
 
 QTEST_APPLESS_MAIN(CandleTimingTest)

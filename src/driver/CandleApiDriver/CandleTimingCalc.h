@@ -38,6 +38,14 @@ struct CandleNominalTiming
     uint32_t phaseSeg2 = 0;
 };
 
+// Nominal bit timing limits of a CAN controller
+struct CandleTimingLimits
+{
+    uint32_t maxTseg1;      // prop + phase_seg1
+    uint32_t maxPhaseSeg2;
+    uint32_t maxBrp;
+};
+
 namespace CandleTimingCalc
 {
 // FDCAN nominal limits: TSEG1 (prop + phase_seg1) 1..256, phase_seg2 1..128, BRP 1..512
@@ -45,6 +53,11 @@ constexpr uint32_t k_maxTseg1 = 256;
 constexpr uint32_t k_maxPhaseSeg2 = 128;
 constexpr uint32_t k_maxBrp = 512;
 constexpr uint32_t k_minTq = 8;
+constexpr CandleTimingLimits k_fdcanLimits { k_maxTseg1, k_maxPhaseSeg2, k_maxBrp };
+
+// 80 MHz adapters: limits that fit both the STM32 FDCAN of CANnectivity and the
+// ESP32-S31 TWAI-FD (nominal PROP 0..127 + PH1 0..63 = TSEG1 190, PH2 1..63, BRP 1..255)
+constexpr CandleTimingLimits k_80MHzLimits { 190, 63, 255 };
 
 // The prescaler tried first: the CAN FD data phase rows use BRP 2, and the
 // same time quantum in both phases is what CiA 601 recommends.
@@ -52,12 +65,14 @@ constexpr uint32_t k_preferredBrp = 2;
 
 // A timing that gives exactly this sample point and the bitrate within 1 bit/s
 // (83333 for 83.333k), or nothing if the limits do not allow one.
-std::optional<CandleNominalTiming> nominal(uint32_t clock, uint32_t bitrate, uint32_t samplePoint);
+std::optional<CandleNominalTiming> nominal(uint32_t clock, uint32_t bitrate, uint32_t samplePoint,
+                                           const CandleTimingLimits &limits = k_fdcanLimits);
 
 // Timings for every bitrate / sample point pair that is not in `existing`
 // (pairs of bitrate and sample point), in bitrate order, then sample point.
 std::vector<CandleNominalTiming> missing(uint32_t clock,
                                          const std::vector<uint32_t> &bitrates,
                                          const std::vector<uint32_t> &samplePoints,
-                                         const std::vector<std::pair<uint32_t, uint32_t>> &existing);
+                                         const std::vector<std::pair<uint32_t, uint32_t>> &existing,
+                                         const CandleTimingLimits &limits = k_fdcanLimits);
 }

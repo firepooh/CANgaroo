@@ -114,6 +114,26 @@ CandleApiInterface::CandleApiInterface(CandleApiDriver *driver,
         << CandleApiTiming(80000000, 5000000, 875,  1,  12,  2)  // 80M/(1*16)    = 5M,   SP=87.5%
         << CandleApiTiming(80000000, 8000000, 800,  1,   6,  2); // 80M/(1*10)    = 8M,   SP=80.0%
 
+    // 80 MHz (CANnectivity, ESP32-S31 TWAI-FD): the other 75 / 80 / 85 / 87.5 % rows of the
+    // common bitrates are computed like for 160 MHz, within the limits both controllers accept
+    {
+        std::vector<std::pair<uint32_t, uint32_t>> existing;
+        for (const auto &t : _timings) {
+            if (t.getBaseClk() == 80000000) {
+                existing.emplace_back(t.getBitrate(), t.getSamplePoint());
+            }
+        }
+        const auto computed = CandleTimingCalc::missing(
+            80000000,
+            { 10000, 20000, 50000, 83333, 100000, 125000, 250000, 500000, 800000, 1000000 },
+            { 750, 800, 850, 875 },
+            existing,
+            CandleTimingCalc::k_80MHzLimits);
+        for (const CandleNominalTiming &t : computed) {
+            _timings << CandleApiTiming(80000000, t.bitrate, t.samplePoint, t.brp, t.phaseSeg1, t.phaseSeg2);
+        }
+    }
+
     // Timings for 125MHz (CANnectivity on STM32H7 FDCAN)
     // total_TQ = 1(sync) + 1(prop) + phase_seg1 + phase_seg2 = 25, SP = 22/25 = 88.0%
     // bitrate  = 125MHz / (brp * 25). 800k is not reachable (125M/800k = 156.25).
