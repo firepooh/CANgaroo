@@ -3,6 +3,7 @@
 #include "core/Backend.h"
 #include "db/model/LinFrame.h"
 #include "db/model/CanDbMessage.h"
+#include <algorithm>
 #include <QColor>
 #include <QSet>
 #include <QDateTime>
@@ -183,8 +184,31 @@ QVariant UnifiedTraceViewModel::data(const QModelIndex &index, int role) const
     }
 }
 
+void UnifiedTraceViewModel::setPaused(bool paused)
+{
+    if (paused == m_paused) {
+        return;
+    }
+    m_paused = paused;
+    if (paused) {
+        m_processTimer.stop();
+        m_skippedWhilePaused = 0;
+    } else {
+        processNewMessages();   // everything recorded while paused, in one go
+    }
+}
+
+int UnifiedTraceViewModel::pendingFrames() const
+{
+    const qint64 size = static_cast<qint64>(backend()->getTrace()->size());
+    return static_cast<int>(std::max<qint64>(0, size - 1 - m_lastProcessedIndex));
+}
+
 void UnifiedTraceViewModel::onTraceDirty()
 {
+    if (m_paused) {
+        return;     // the trace keeps the frames; setPaused(false) takes them
+    }
     if (!m_processTimer.isActive()) {
         m_processTimer.start();
     }
@@ -385,7 +409,12 @@ void UnifiedTraceViewModel::beforeRemove(int count)
 {
     // Adjust lastProcessedIndex since BusTrace removed items from the front
     m_lastProcessedIndex -= count;
-    if (m_lastProcessedIndex < -1) m_lastProcessedIndex = -1;
+    if (m_lastProcessedIndex < -1) {
+        // The trace dropped frames this view had not taken yet (only while paused
+        // long enough to fill the trace): they can no longer be shown.
+        m_skippedWhilePaused += -1 - m_lastProcessedIndex;
+        m_lastProcessedIndex = -1;
+    }
 }
 
 void UnifiedTraceViewModel::afterRemove(int count)
@@ -405,6 +434,7 @@ void UnifiedTraceViewModel::afterClear()
     m_rootItem = std::make_shared<UnifiedTraceItem>(BusMessage());
     m_protocolManager.reset();
     m_lastProcessedIndex = -1;
+    m_skippedWhilePaused = 0;
     m_globalIndexCounter = 1;
     m_firstTimestamp = 0;
     m_previousRowTimestamp = 0;

@@ -23,8 +23,14 @@
 #include "TraceWindow.h"
 #include "ui_TraceWindow.h"
 
+#include <algorithm>
+#include <iterator>
+
 #include <QCheckBox>
 #include <QDomDocument>
+#include <QLabel>
+#include <QSignalBlocker>
+#include <QToolButton>
 #include <QHeaderView>
 #include <QRegularExpression>
 #include <QScrollBar>
@@ -302,6 +308,25 @@ void TraceWindow::applyMonitorToolbarLayout()
     bar->addWidget(ui->TraceClearpushButton);
     bar->addSpacing(16);
     bar->addWidget(ui->cbAutoscroll);
+
+    // Pause like the Monitor tab: per tab, frames keep being recorded
+    if (!_pauseButton) {
+        _pauseButton = new QToolButton(this);
+        _pauseButton->setText(tr("Pause"));
+        _pauseButton->setCheckable(true);
+        _pauseButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        _pauseButton->setToolTip(tr("Freeze this tab; frames are still recorded and shown when you resume"));
+        connect(_pauseButton, &QToolButton::toggled, this, [this](bool checked) {
+            setTabPaused(ui->tabs->currentIndex(), checked);
+        });
+        _pauseLabel = new QLabel(this);
+        _pauseLabel->hide();
+        _pauseLabelTimer.setInterval(500);
+        connect(&_pauseLabelTimer, &QTimer::timeout, this, &TraceWindow::updatePauseLabel);
+    }
+    bar->addWidget(_pauseButton);
+    bar->addWidget(_pauseLabel);
+    bar->addSpacing(16);
     bar->addWidget(ui->xcpSessionsButton);
     bar->addWidget(ui->xcpStatusLabel);
     bar->addStretch(1);
@@ -323,8 +348,55 @@ void TraceWindow::placeToolbar(int tab)
     ui->widget->show();
 }
 
+void TraceWindow::setTabPaused(int tab, bool paused)
+{
+    if (tab <= Cat_Aggregated || tab >= Cat_Count) {
+        return;     // the Monitor tab has its own Pause
+    }
+    _paused[tab] = paused;
+    for (UnifiedTraceViewModel *model : { _viewModels[tab], _altViewModels[tab] }) {
+        if (model) {
+            model->setPaused(paused);
+        }
+    }
+    if (paused) {
+        _pauseLabelTimer.start();
+    } else if (std::none_of(std::begin(_paused), std::end(_paused), [](bool p) { return p; })) {
+        _pauseLabelTimer.stop();
+    }
+    updatePauseLabel();
+}
+
+void TraceWindow::updatePauseLabel()
+{
+    if (!_pauseLabel) {
+        return;
+    }
+    const int tab = ui->tabs->currentIndex();
+    if (tab <= Cat_Aggregated || tab >= Cat_Count || !_paused[tab] || !_viewModels[tab]) {
+        _pauseLabel->hide();
+        return;
+    }
+    // The primary and alternative models of a tab pause together, so either one counts
+    QString text = tr("%L1 new").arg(_viewModels[tab]->pendingFrames());
+    const qint64 skipped = _viewModels[tab]->framesSkippedWhilePaused();
+    if (skipped > 0) {
+        text += tr(", %L1 dropped (trace full)").arg(skipped);
+    }
+    _pauseLabel->setText(text);
+    _pauseLabel->setToolTip(tr("Frames recorded since this tab was paused. The trace keeps a limited number "
+                               "of frames: frames it drops before you resume are not shown."));
+    _pauseLabel->show();
+}
+
 void TraceWindow::on_tabs_currentChanged(int index)
 {
+    if (_pauseButton) {
+        // One button for all tabs: show the state of the tab now in front
+        const QSignalBlocker block(_pauseButton);
+        _pauseButton->setChecked(index > Cat_Aggregated && index < Cat_Count && _paused[index]);
+        updatePauseLabel();
+    }
     placeToolbar(index);
     // XCP IDs and the session status sit in the toolbar line, on the XCP tab only
     ui->xcpSessionsButton->setVisible(index == Cat_XCP);

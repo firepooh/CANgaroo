@@ -36,6 +36,16 @@ public:
 
     virtual QVariant data(const QModelIndex &index, int role) const override;
 
+    // Pause (UDS / J1939 / XCP tabs): stop taking new frames from the trace. The
+    // trace keeps recording; resuming processes everything recorded meanwhile in
+    // one go. Rebuilds (setup or XCP session change, clear) still run while paused.
+    void setPaused(bool paused);
+    [[nodiscard]] bool isPaused() const { return m_paused; }
+    // Frames recorded since the last processed one (waiting while paused)
+    [[nodiscard]] int pendingFrames() const;
+    // Frames the trace dropped (size limit) before this view took them, since the pause began
+    [[nodiscard]] qint64 framesSkippedWhilePaused() const { return m_skippedWhilePaused; }
+
 private slots:
     void onTraceDirty();
     void processNewMessages();
@@ -54,6 +64,8 @@ private:
     Category m_category;
     ProtocolManager m_protocolManager;
     int m_lastProcessedIndex = -1;
+    bool m_paused = false;
+    qint64 m_skippedWhilePaused = 0;
     uint32_t m_globalIndexCounter = 1;
     uint64_t m_firstTimestamp = 0;
     uint64_t m_previousRowTimestamp = 0;

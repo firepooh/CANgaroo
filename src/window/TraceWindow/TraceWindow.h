@@ -39,6 +39,8 @@ class Backend;
 class QDomDocument;
 class QDomElement;
 class QSortFilterProxyModel;
+class QToolButton;
+class QLabel;
 class AggregatedTraceViewModel;
 class UnifiedTraceViewModel;
 
@@ -106,6 +108,14 @@ private:
     };
 
     bool _scrollPending[Cat_Count] = {};
+
+    // Pause per tab (UDS / J1939 / XCP), like the Monitor tab's Pause
+    bool _paused[Cat_Count] = {};
+    QToolButton *_pauseButton = nullptr;
+    QLabel *_pauseLabel = nullptr;
+    QTimer _pauseLabelTimer;
+    void setTabPaused(int tab, bool paused);
+    void updatePauseLabel();
 
     TraceFilterModel * _filterModels[Cat_Count];
     UnifiedTraceViewModel *_viewModels[Cat_Count];
