@@ -30,7 +30,9 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSortFilterProxyModel>
+#include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QPushButton>
 
 #include "core/Backend.h"
 #include "core/BusTrace.h"
@@ -136,6 +138,8 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
     updateXcpStatus();
 
     connect(ui->tabs, &QTabWidget::currentChanged, this, &TraceWindow::on_tabs_currentChanged);
+    ui->xcpSessionsButton->setVisible(ui->tabs->currentIndex() == Cat_XCP);
+    ui->xcpStatusLabel->setVisible(ui->tabs->currentIndex() == Cat_XCP);
 
     ui->cbViewMode->addItem(tr("Aggregated"), mode_aggregated);
     ui->cbViewMode->addItem(tr("Rolling Log"), mode_unified);
@@ -247,7 +251,51 @@ void TraceWindow::setMonitorPage(QWidget *page)
     ui->verticalLayout_2->setContentsMargins(0, 0, 0, 0);
     ui->verticalLayout_2->addWidget(page);
     ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
+    // The protocol tabs get the same frame as the Monitor tab: tree flush with the tab
+    for (QVBoxLayout *page : { ui->verticalLayout_3, ui->verticalLayout_4, ui->verticalLayout_xcp }) {
+        page->setContentsMargins(0, 0, 0, 0);
+        page->setSpacing(0);
+    }
+    applyMonitorToolbarLayout();
     placeToolbar(ui->tabs->currentIndex());
+}
+
+void TraceWindow::applyMonitorToolbarLayout()
+{
+    // Same look and order as the Monitor tab's toolbar: compact controls packed to
+    // the left, view switches first, then the display options, then search and XCP
+    QHBoxLayout *bar = ui->horizontalLayout;
+    while (QLayoutItem *item = bar->takeAt(0)) {
+        delete item;    // only the layout item; the widgets stay
+    }
+    ui->line->hide();
+    bar->setContentsMargins(4, 4, 4, 2);
+    bar->setSpacing(6);
+
+    for (QPushButton *button : { ui->TraceClearpushButton, ui->filterButton, ui->xcpSessionsButton }) {
+        button->setMinimumHeight(0);
+        button->setIconSize(QSize(14, 14));
+    }
+    ui->filterLineEdit->setMinimumHeight(0);
+    ui->filterLineEdit->setMaximumWidth(220);
+    ui->filterLineEdit->setClearButtonEnabled(true);
+    ui->label_2->setText(tr("Find:"));
+
+    bar->addWidget(ui->cbAutoscroll);
+    bar->addWidget(ui->TraceClearpushButton);
+    bar->addWidget(ui->filterButton);
+    bar->addSpacing(16);
+    bar->addWidget(ui->label_3);
+    bar->addWidget(ui->cbViewMode);
+    bar->addWidget(ui->label);
+    bar->addWidget(ui->cbTimestampMode);
+    bar->addSpacing(16);
+    bar->addWidget(ui->label_2);
+    bar->addWidget(ui->filterLineEdit);
+    bar->addSpacing(16);
+    bar->addWidget(ui->xcpSessionsButton);
+    bar->addWidget(ui->xcpStatusLabel);
+    bar->addStretch(1);
 }
 
 void TraceWindow::placeToolbar(int tab)
@@ -269,6 +317,9 @@ void TraceWindow::placeToolbar(int tab)
 void TraceWindow::on_tabs_currentChanged(int index)
 {
     placeToolbar(index);
+    // XCP IDs and the session status sit in the toolbar line, on the XCP tab only
+    ui->xcpSessionsButton->setVisible(index == Cat_XCP);
+    ui->xcpStatusLabel->setVisible(index == Cat_XCP);
     int tabIdx = ui->tabs->currentIndex();
     mode_t currentMode = _tabModes[tabIdx];
     for (int i = 0; i < ui->cbViewMode->count(); i++) {

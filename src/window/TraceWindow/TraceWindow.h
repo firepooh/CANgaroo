@@ -89,6 +89,7 @@ private slots:
 
 private:
     void placeToolbar(int tab);
+    void applyMonitorToolbarLayout();
 
     Ui::TraceWindow *ui;
     Backend *_backend;

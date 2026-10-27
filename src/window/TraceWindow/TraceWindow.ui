@@ -50,6 +50,20 @@
        <widget class="QComboBox" name="cbTimestampMode"/>
       </item>
       <item>
+       <widget class="QPushButton" name="xcpSessionsButton">
+        <property name="text">
+         <string>XCP IDs...</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="xcpStatusLabel">
+        <property name="text">
+         <string/>
+        </property>
+       </widget>
+      </item>
+      <item>
        <spacer name="horizontalSpacer">
         <property name="orientation">
          <enum>Qt::Horizontal</enum>
@@ -217,31 +231,6 @@
        <string>XCP</string>
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_xcp">
-       <item>
-        <layout class="QHBoxLayout" name="horizontalLayout_xcp">
-         <item>
-          <widget class="QPushButton" name="xcpSessionsButton">
-           <property name="text">
-            <string>XCP IDs...</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QLabel" name="xcpStatusLabel">
-           <property name="text">
-            <string/>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <spacer name="horizontalSpacer_xcp">
-           <property name="orientation">
-            <enum>Qt::Horizontal</enum>
-           </property>
-          </spacer>
-         </item>
-        </layout>
-       </item>
        <item>
         <widget class="QTreeView" name="treeXcp">
          <property name="verticalScrollMode">
