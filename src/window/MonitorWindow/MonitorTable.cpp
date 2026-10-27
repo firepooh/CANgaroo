@@ -122,7 +122,7 @@ MonitorTable::MonitorTable(MonitorBuffer *buffer, QWidget *parent)
     _header = new QHeaderView(Qt::Horizontal, this);
     _header->setModel(_headerModel);
     _header->setSectionsMovable(true);
-    _header->setSectionsClickable(false);
+    _header->setSectionsClickable(true);     // sorting, see MonitorView
     _header->setHighlightSections(false);
     _header->setStretchLastSection(true);
     _header->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);

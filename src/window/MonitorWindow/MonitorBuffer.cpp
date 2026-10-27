@@ -70,6 +70,60 @@ MonitorBuffer::MonitorBuffer(Backend &backend, QObject *parent)
 
 MonitorBuffer::~MonitorBuffer() = default;
 
+bool MonitorBuffer::Filter::isActive() const
+{
+    return !showTx || !showRx || !hiddenMessageIds.isEmpty() || !hiddenLinFrameIds.isEmpty()
+        || !hiddenInterfaces.isEmpty();
+}
+
+bool MonitorBuffer::Filter::accepts(const BusMessage &msg) const
+{
+    // Same rules as TraceFilterModel
+    if (msg.isRX() ? !showRx : !showTx) { return false; }
+    if (msg.busType() == BusType::LIN) {
+        if (hiddenLinFrameIds.contains(static_cast<uint8_t>(msg.getId()))) { return false; }
+    } else if (hiddenMessageIds.contains(msg.getId())) {
+        return false;
+    }
+    return !hiddenInterfaces.contains(msg.getInterfaceId());
+}
+
+void MonitorBuffer::setFilter(const Filter &filter)
+{
+    _filter = filter;
+    rebuild();
+}
+
+bool MonitorBuffer::isSortable(int column)
+{
+    switch (column) {
+        case col_arbid:
+        case col_description:
+        case col_len:
+        case col_network:
+        case col_node:
+        case col_tx:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void MonitorBuffer::setSort(int column, bool descending)
+{
+    if (!isSortable(column)) { return; }
+    if (column == _sortColumn && descending == _sortDescending) { return; }
+    _sortColumn = column;
+    _sortDescending = descending;
+    if (_mode != Mode::Fixed) { return; }
+
+    std::stable_sort(_entries.begin(), _entries.end(),
+        [this](const std::unique_ptr<Entry> &a, const std::unique_ptr<Entry> &b) { return sortsBefore(*a, *b); });
+    _linesDirty = true;
+    _structureChanged = true;
+    emit changed(0);
+}
+
 void MonitorBuffer::setMode(Mode mode)
 {
     if (_mode == mode) { return; }
@@ -477,15 +531,37 @@ uint64_t MonitorBuffer::makeKey(const BusMessage &msg) noexcept
          | (static_cast<uint64_t>(msg.getId()) & 0x1FFFFFFFull);
 }
 
-bool MonitorBuffer::sortsBefore(const BusMessage &a, const BusMessage &b) noexcept
+bool MonitorBuffer::sortsBefore(const Entry &a, const Entry &b) const
 {
-    // ID first, so the same ID on several networks stays together; error frames last
+    // Error frames stay last. ID order keeps the same ID on several networks together.
+    const BusMessage &ma = a.msg;
+    const BusMessage &mb = b.msg;
+    if (ma.isErrorFrame() != mb.isErrorFrame()) { return mb.isErrorFrame(); }
+
+    int cmp = 0;
+    switch (_sortColumn) {
+        case col_description:
+        case col_network:
+        case col_node:
+            cmp = text(a, _sortColumn).compare(text(b, _sortColumn), Qt::CaseInsensitive);
+            break;
+        case col_len:
+            cmp = static_cast<int>(ma.getLength()) - static_cast<int>(mb.getLength());
+            break;
+        case col_tx:
+            cmp = static_cast<int>(!ma.isRX()) - static_cast<int>(!mb.isRX());
+            break;
+        default:
+            break;
+    }
+    if (cmp != 0) { return _sortDescending ? cmp > 0 : cmp < 0; }
+
     auto order = [](const BusMessage &m)
     {
-        return std::make_tuple(m.isErrorFrame(), static_cast<int>(m.busType()), m.isExtended(),
-                               m.getId(), m.getInterfaceId(), !m.isRX());
+        return std::make_tuple(static_cast<int>(m.busType()), m.isExtended(), m.getId(), m.getInterfaceId(), !m.isRX());
     };
-    return order(a) < order(b);
+    if (_sortColumn == col_arbid && _sortDescending) { return order(mb) < order(ma); }
+    return order(ma) < order(mb);
 }
 
 QString MonitorBuffer::memoKey(const BusMessage &msg)
@@ -540,6 +616,10 @@ void MonitorBuffer::processFixed(int size)
 
     for (int i = _lastProcessed + 1; i < size; ++i) {
         const BusMessage msg = trace->getMessage(i);
+        if (!_filter.accepts(msg)) {
+            _lastProcessed = i;
+            continue;
+        }
         const uint64_t key = makeKey(msg);
 
         if (Entry *e = _byKey.value(key)) {
@@ -577,8 +657,8 @@ void MonitorBuffer::processFixed(int size)
             entry->receivedUs = now;
             entry->byteChangedUs.assign(msg.getLength(), 0);
 
-            const auto pos = std::upper_bound(_entries.begin(), _entries.end(), msg,
-                [](const BusMessage &m, const std::unique_ptr<Entry> &r) { return sortsBefore(m, r->msg); });
+            const auto pos = std::upper_bound(_entries.begin(), _entries.end(), entry,
+                [this](const std::unique_ptr<Entry> &e, const std::unique_ptr<Entry> &r) { return sortsBefore(*e, *r); });
             _byKey.insert(key, entry.get());
             _entries.insert(pos, std::move(entry));
             _linesDirty = true;
@@ -594,8 +674,10 @@ int MonitorBuffer::processScroll(int size)
     // Frames that would be trimmed right away are not taken over at all
     const int first = std::max(_lastProcessed + 1, size - scroll_max_entries);
     for (int i = first; i < size; ++i) {
+        BusMessage msg = trace->getMessage(i);
+        if (!_filter.accepts(msg)) { continue; }
         auto entry = std::make_unique<Entry>();
-        entry->msg = trace->getMessage(i);
+        entry->msg = std::move(msg);
         entry->key = makeKey(entry->msg);
         entry->count = ++_seq;
         entry->prev = _lastByKey.value(entry->key);

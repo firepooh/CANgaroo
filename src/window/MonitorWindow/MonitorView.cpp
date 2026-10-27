@@ -33,6 +33,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "helpers/apphelpers.h"
+#include "window/TraceWindow/TraceFilterDialog.h"
 #include "MonitorBuffer.h"
 #include "MonitorTable.h"
 
@@ -51,7 +53,8 @@ QToolButton *makeButton(const QString &text, bool checkable, QWidget *parent)
 } // namespace
 
 MonitorView::MonitorView(Backend &backend, QWidget *parent)
-    : QWidget(parent)
+    : QWidget(parent),
+      _backend(backend)
 {
     _buffer = new MonitorBuffer(backend, this);
     _table = new MonitorTable(_buffer, this);
@@ -67,6 +70,9 @@ MonitorView::MonitorView(Backend &backend, QWidget *parent)
     _pauseButton->setToolTip(tr("Freeze this view; frames are still recorded"));
     QToolButton *eraseButton = makeButton(tr("Erase"), false, this);
     eraseButton->setToolTip(tr("Clear this view only"));
+    _filterButton = makeButton(tr("Filter"), false, this);
+    _filterButton->setIcon(AppHelpers::themedIcon("view-filter", ":/assets/filter-symbolic.svg"));
+    _filterButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 
     _refreshBox = new QComboBox(this);
     _refreshBox->setToolTip(tr("How often new frames are shown. Shorter needs more CPU"));
@@ -97,6 +103,7 @@ MonitorView::MonitorView(Backend &backend, QWidget *parent)
     toolbar->addWidget(_timeAbsButton);
     toolbar->addWidget(_pauseButton);
     toolbar->addWidget(eraseButton);
+    toolbar->addWidget(_filterButton);
     toolbar->addSpacing(16);
     toolbar->addWidget(new QLabel(tr("Refresh:"), this));
     toolbar->addWidget(_refreshBox);
@@ -118,9 +125,24 @@ MonitorView::MonitorView(Backend &backend, QWidget *parent)
     header->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(header, &QHeaderView::customContextMenuRequested, this, &MonitorView::showHeaderMenu);
 
+    // Click a column title to sort the Fixed view by it, again to reverse
+    connect(header, &QHeaderView::sortIndicatorChanged, this, [this](int column, Qt::SortOrder order)
+    {
+        if (MonitorBuffer::isSortable(column)) {
+            _buffer->setSort(column, order == Qt::DescendingOrder);
+            emit settingsChanged();
+        }
+        updateSortIndicator();
+    });
+    updateSortIndicator();
+
+    connect(_filterButton, &QToolButton::clicked, this, &MonitorView::openFilterDialog);
+    updateFilterButton();
+
     connect(_scrollButton, &QToolButton::toggled, this, [this](bool on)
     {
         _buffer->setMode(on ? MonitorBuffer::Mode::Scroll : MonitorBuffer::Mode::Fixed);
+        updateSortIndicator();
         emit settingsChanged();
     });
     connect(_expandBox, &QCheckBox::toggled, this, [this](bool on)
@@ -152,6 +174,48 @@ MonitorView::MonitorView(Backend &backend, QWidget *parent)
     connect(nextButton, &QToolButton::clicked, this, [find]() { find(true); });
     connect(_findText, &QLineEdit::returnPressed, this, [find]() { find(true); });
     connect(_buffer, &MonitorBuffer::memosChanged, this, &MonitorView::settingsChanged);
+}
+
+void MonitorView::updateSortIndicator()
+{
+    // Scroll mode keeps the arrival order: no indicator, clicks do nothing
+    QHeaderView *header = _table->header();
+    const QSignalBlocker block(header);
+    const bool fixed = _buffer->mode() == MonitorBuffer::Mode::Fixed;
+    header->setSortIndicatorShown(fixed);
+    header->setSortIndicator(fixed ? _buffer->sortColumn() : -1,
+                             _buffer->sortDescending() ? Qt::DescendingOrder : Qt::AscendingOrder);
+}
+
+void MonitorView::openFilterDialog()
+{
+    // The Trace window's dialog; the filter applies to this view only
+    const MonitorBuffer::Filter &current = _buffer->filter();
+    TraceFilterDialog dlg(_backend, this);
+    dlg.setShowTx(current.showTx);
+    dlg.setShowRx(current.showRx);
+    dlg.setHiddenMessageIds(current.hiddenMessageIds);
+    dlg.setHiddenLinFrameIds(current.hiddenLinFrameIds);
+    dlg.setHiddenInterfaces(current.hiddenInterfaces);
+    if (dlg.exec() != QDialog::Accepted) { return; }
+
+    MonitorBuffer::Filter filter;
+    filter.showTx = dlg.showTx();
+    filter.showRx = dlg.showRx();
+    filter.hiddenMessageIds = dlg.hiddenMessageIds();
+    filter.hiddenLinFrameIds = dlg.hiddenLinFrameIds();
+    filter.hiddenInterfaces = dlg.hiddenInterfaces();
+    _buffer->setFilter(filter);
+    updateFilterButton();
+    emit settingsChanged();
+}
+
+void MonitorView::updateFilterButton()
+{
+    const bool active = _buffer->filter().isActive();
+    _filterButton->setText(active ? tr("Filter (on)") : tr("Filter"));
+    _filterButton->setToolTip(active ? tr("Some frames are hidden in this view. Click to change the filter")
+                                     : tr("Hide frames by direction, ID or interface in this view"));
 }
 
 void MonitorView::showHeaderMenu(const QPoint &pos)
@@ -190,6 +254,25 @@ void MonitorView::saveXML(QDomDocument &xml, QDomElement &el) const
     el.setAttribute("refreshMs", _refreshBox->currentData().toInt());
     el.setAttribute("findColumn", _findColumn->currentIndex());
     el.setAttribute("header", QString::fromLatin1(_table->header()->saveState().toBase64()));
+    el.setAttribute("sortColumn", _buffer->sortColumn());
+    el.setAttribute("sortDescending", _buffer->sortDescending() ? "1" : "0");
+
+    // Same attributes as the Trace window's <TraceFilter>
+    const MonitorBuffer::Filter &filter = _buffer->filter();
+    QDomElement filterEl = xml.createElement("MonitorFilter");
+    filterEl.setAttribute("showTx", filter.showTx ? "1" : "0");
+    filterEl.setAttribute("showRx", filter.showRx ? "1" : "0");
+    auto join = [](const auto &set)
+    {
+        QStringList list;
+        for (auto v : set) { list.append(QString::number(v)); }
+        list.sort();
+        return list.join(',');
+    };
+    if (!filter.hiddenMessageIds.isEmpty()) { filterEl.setAttribute("hiddenMessages", join(filter.hiddenMessageIds)); }
+    if (!filter.hiddenLinFrameIds.isEmpty()) { filterEl.setAttribute("hiddenLinFrames", join(filter.hiddenLinFrameIds)); }
+    if (!filter.hiddenInterfaces.isEmpty()) { filterEl.setAttribute("hiddenInterfaces", join(filter.hiddenInterfaces)); }
+    el.appendChild(filterEl);
 
     const QHash<QString, QString> &memos = _buffer->memos();
     for (auto it = memos.constBegin(); it != memos.constEnd(); ++it) {
@@ -212,7 +295,31 @@ void MonitorView::loadXML(const QDomElement &el)
     _findColumn->setCurrentIndex(el.attribute("findColumn", "0").toInt());
 
     const QByteArray header = QByteArray::fromBase64(el.attribute("header").toLatin1());
-    if (!header.isEmpty()) { _table->header()->restoreState(header); }
+    if (!header.isEmpty()) {
+        const QSignalBlocker block(_table->header());
+        _table->header()->restoreState(header);
+    }
+    _buffer->setSort(el.attribute("sortColumn", QString::number(MonitorBuffer::col_arbid)).toInt(),
+                     el.attribute("sortDescending", "0") == "1");
+    updateSortIndicator();
+
+    MonitorBuffer::Filter filter;
+    const QDomElement filterEl = el.firstChildElement("MonitorFilter");
+    if (!filterEl.isNull()) {
+        filter.showTx = filterEl.attribute("showTx", "1") == "1";
+        filter.showRx = filterEl.attribute("showRx", "1") == "1";
+        for (const QString &s : filterEl.attribute("hiddenMessages").split(',', Qt::SkipEmptyParts)) {
+            filter.hiddenMessageIds.insert(s.toUInt());
+        }
+        for (const QString &s : filterEl.attribute("hiddenLinFrames").split(',', Qt::SkipEmptyParts)) {
+            filter.hiddenLinFrameIds.insert(static_cast<uint8_t>(s.toUInt()));
+        }
+        for (const QString &s : filterEl.attribute("hiddenInterfaces").split(',', Qt::SkipEmptyParts)) {
+            filter.hiddenInterfaces.insert(static_cast<BusInterfaceId>(s.toUInt()));
+        }
+    }
+    _buffer->setFilter(filter);
+    updateFilterButton();
 
     QHash<QString, QString> memos;
     for (QDomElement memoEl = el.firstChildElement("Memo"); !memoEl.isNull(); memoEl = memoEl.nextSiblingElement("Memo")) {

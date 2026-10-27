@@ -45,15 +45,20 @@ signals:
     void settingsChanged();
 
 private:
+    Backend &_backend;
     MonitorBuffer *_buffer;
     MonitorTable *_table;
     QToolButton *_scrollButton;
     QToolButton *_timeAbsButton;
     QToolButton *_pauseButton;
+    QToolButton *_filterButton;
     QCheckBox *_expandBox;
     QComboBox *_refreshBox;
     QComboBox *_findColumn;
     QLineEdit *_findText;
 
     void showHeaderMenu(const QPoint &pos);
+    void openFilterDialog();
+    void updateFilterButton();
+    void updateSortIndicator();
 };

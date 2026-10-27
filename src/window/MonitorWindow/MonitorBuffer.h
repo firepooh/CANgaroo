@@ -37,8 +37,9 @@ class Backend;
 // refresh interval, so the cost of the view does not grow with the frame rate.
 //
 // Fixed mode keeps one entry per frame ID (per network and direction), sorted
-// by ID, with receive and data-change counters. Scroll mode keeps the last
-// scroll_max_entries frames in arrival order.
+// by ID or by another column that does not change with each frame, with receive
+// and data-change counters. Scroll mode keeps the last scroll_max_entries frames
+// in arrival order. Both take only the frames the filter accepts.
 //
 // The view shows each entry as one message line plus, when the entry is
 // expanded, its data lines (data_line_bytes each, only for frames longer than
@@ -103,8 +104,33 @@ public:
         [[nodiscard]] int lineCount() const { return 1 + (expanded ? childLines() : 0); }
     };
 
+    // The Trace window's Filter dialog settings: direction, hidden IDs and interfaces
+    struct Filter
+    {
+        bool showTx = true;
+        bool showRx = true;
+        QSet<uint32_t> hiddenMessageIds;
+        QSet<uint8_t> hiddenLinFrameIds;
+        QSet<BusInterfaceId> hiddenInterfaces;
+
+        [[nodiscard]] bool isActive() const;
+        [[nodiscard]] bool accepts(const BusMessage &msg) const;
+    };
+
     explicit MonitorBuffer(Backend &backend, QObject *parent = nullptr);
     ~MonitorBuffer() override;
+
+    [[nodiscard]] const Filter &filter() const { return _filter; }
+    // Takes the whole trace over again with the new filter
+    void setFilter(const Filter &filter);
+
+    // Fixed mode order. Only columns whose text stays the same for an entry can
+    // sort (ID, description, length, network, node, Tx), so entries move only when
+    // the order changes or a new ID arrives. Ties and the ID column use ID order.
+    [[nodiscard]] static bool isSortable(int column);
+    [[nodiscard]] int sortColumn() const { return _sortColumn; }
+    [[nodiscard]] bool sortDescending() const { return _sortDescending; }
+    void setSort(int column, bool descending);
 
     [[nodiscard]] Mode mode() const { return _mode; }
     void setMode(Mode mode);
@@ -189,6 +215,9 @@ private:
     bool _structureChanged = true;
 
     Mode _mode = Mode::Fixed;
+    Filter _filter;
+    int _sortColumn = col_arbid;
+    bool _sortDescending = false;
     bool _paused = false;
     bool _absoluteTime = false;
     bool _expandNew = true;
@@ -206,7 +235,7 @@ private:
     void updateLineStarts();
 
     [[nodiscard]] static uint64_t makeKey(const BusMessage &msg) noexcept;
-    [[nodiscard]] static bool sortsBefore(const BusMessage &a, const BusMessage &b) noexcept;
+    [[nodiscard]] bool sortsBefore(const Entry &a, const Entry &b) const;
     [[nodiscard]] static QString memoKey(const BusMessage &msg);
     [[nodiscard]] int signalCount(const BusMessage &msg) const;
     [[nodiscard]] QString interfaceName(BusInterfaceId id) const;
