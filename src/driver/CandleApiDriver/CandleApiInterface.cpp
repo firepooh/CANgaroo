@@ -617,7 +617,7 @@ void CandleApiInterface::open()
         return;
     }
 
-    _elmue = candle_dev_elmue_active(_sharedDev->handle);
+    _elmue = candle_channel_elmue_active(_sharedDev->handle, _channel);
     log_info(tr("CandleApi: %1 uses the %2 USB protocol")
         .arg(getName(), _elmue ? "ElmueSoft (blobs, TX echo on ACK)" : "legacy gs_usb"));
 

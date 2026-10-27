@@ -29,6 +29,7 @@
 #include <atomic>
 #include <cstdint>
 #include <thread>
+#include <vector>
 
 struct CandleQueuedFrame
 {
@@ -44,7 +45,10 @@ struct CandleQueuedFrame
 // endpoint, so frames for channel 1 are silently consumed by channel 0's reads
 // and lost. This struct owns exactly ONE USB handle and ONE reader thread per
 // physical device; all CandleApiInterface instances for the same device share
-// it and read from their per-channel queue.
+// it and read from their per-channel queue. The exception is the ElmueSoft
+// protocol on multi-channel devices: there each channel has its own USB
+// interface, which the same handle opens (candle_dev_set_channel_path()) and
+// one more reader thread reads.
 struct CandleSharedDevice
 {
     static constexpr int MAX_CHANNELS = 8;
@@ -84,20 +88,27 @@ struct CandleSharedDevice
     bool deviceTimestampValid{false};
 
     // 32-bit firmware timestamps wrap after about 71 minutes. Unwrap them in
-    // the single USB reader/TX order so all channels share one monotonic clock.
+    // the USB reader/TX order so all channels share one monotonic clock. With
+    // one reader per interface the order between interfaces can differ by a
+    // few ms, far from the 2^31 us step taken as a wrap.
     QMutex timestampMutex;
     uint32_t prevDeviceTs{0};
     uint64_t deviceTsHigh{0};
 
-    // Background reader thread: calls candle_fd_frame_read() in a loop and
-    // routes each received frame to the appropriate channel queue.
-    std::thread readerThread;
+    // Background reader threads: call candle_fd_frame_read() in a loop and
+    // route each received frame to the appropriate channel queue. One thread
+    // reads interface 0; ElmueSoft multi-channel devices add one per channel
+    // interface (candle_channel_has_interface()).
+    std::vector<std::thread> readerThreads;
     std::atomic<bool> readerRunning{false};
 
     ~CandleSharedDevice();
 
     void startReader();
     void stopReader();
+    // Reads one USB interface: interface 0 for interfaceChannel 0, else the
+    // own interface of that channel
+    void readLoop(uint8_t interfaceChannel);
     void resetTimestampEpoch(uint64_t hostOffsetUs, uint32_t deviceTicks, bool valid);
     bool deviceTimestampToHostUs(uint32_t rawTimestampUs, uint64_t &hostTimestampUs);
 

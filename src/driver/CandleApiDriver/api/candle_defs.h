@@ -42,6 +42,8 @@
 #include "candle.h"
 
 #define CANDLE_MAX_DEVICES 32
+/* Channels per device (ch_caps[], per-channel USB interfaces) */
+#define CANDLE_MAX_CHANNELS 8
 /* Outstanding USB IN requests. Legacy gs_usb firmware sends one frame per
  * transfer, so this is also how many frames the host controller can take
  * while the reader thread is not scheduled: 1024 = 240 ms at a saturated
@@ -77,7 +79,7 @@ typedef struct {
     uint8_t *buf;       /* rx_buf_size bytes inside candle_device_t.rx_buf */
 } canlde_rx_urb;
 
-typedef struct {
+typedef struct candle_device {
     wchar_t path[256];
     candle_devstate_t state;
     candle_err_t last_error;
@@ -93,7 +95,7 @@ typedef struct {
     candle_device_config_t dconf;
     candle_capability_t bt_const;
     /* Per-channel capabilities: index 0..dconf.icount, maximum 8 channels */
-    candle_capability_t ch_caps[8];
+    candle_capability_t ch_caps[CANDLE_MAX_CHANNELS];
     canlde_rx_urb rxurbs[CANDLE_URB_COUNT];
     HANDLE rxevents[CANDLE_URB_COUNT];
     unsigned rx_next_urb; /* oldest pending URB: the next one to complete */
@@ -113,6 +115,16 @@ typedef struct {
     DWORD elmue_rx_len;
     DWORD elmue_rx_off;
     int elmue_rx_left;          /* messages left in elmue_rx */
+
+    /* ElmueSoft multi-channel adapters move every channel to its own USB
+     * interface (CANable 2.5 layout: channel 0 = interface 0, channel N =
+     * interface N + 1). ch_path[] holds the Windows paths of channels 1..,
+     * set before open; ch_dev[] the data-only devices opened on them. The
+     * device itself keeps the control requests and the data of channel 0. */
+    wchar_t ch_path[CANDLE_MAX_CHANNELS][256];
+    struct candle_device *ch_dev[CANDLE_MAX_CHANNELS];
+    bool elmue_only;            /* parse every IN transfer as ElmueSoft messages */
+    uint8_t elmue_channel;      /* channel of the frames read on this interface */
 } candle_device_t;
 
 typedef struct {

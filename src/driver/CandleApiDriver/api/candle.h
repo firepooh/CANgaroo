@@ -265,6 +265,16 @@ bool __stdcall DLL candle_dev_elmue_active(candle_handle hdev);
 bool __stdcall DLL candle_dev_close(candle_handle hdev);
 bool __stdcall DLL candle_dev_free(candle_handle hdev);
 
+/* ElmueSoft multi-channel devices (CANable 2.5 layout): channel N > 0 has its
+ * own USB interface N + 1. Give the Windows path of each such interface before
+ * candle_dev_open(); only then can the device use the ElmueSoft protocol. */
+bool __stdcall DLL candle_dev_set_channel_path(candle_handle hdev, uint8_t ch, const wchar_t *path);
+/* True when channel ch > 0 of the open device reads and sends through its own
+ * interface: read it with candle_fd_frame_read_channel(). */
+bool __stdcall DLL candle_channel_has_interface(candle_handle hdev, uint8_t ch);
+/* Like candle_dev_elmue_active() for the interface that carries channel ch. */
+bool __stdcall DLL candle_channel_elmue_active(candle_handle hdev, uint8_t ch);
+
 bool __stdcall DLL candle_channel_count(candle_handle hdev, uint8_t *num_channels);
 bool __stdcall DLL candle_channel_get_capabilities(candle_handle hdev, uint8_t ch, candle_capability_t *cap);
 bool __stdcall DLL candle_channel_get_state(candle_handle hdev, uint8_t ch, candle_can_state_t *state);
@@ -291,6 +301,8 @@ uint32_t __stdcall DLL candle_frame_timestamp_us(candle_frame_t *frame);
 bool __stdcall DLL candle_channel_set_data_timing(candle_handle hdev, uint8_t ch, candle_bittiming_t *data);
 bool __stdcall DLL candle_fd_frame_send(candle_handle hdev, uint8_t ch, candle_fd_frame_t *frame);
 bool __stdcall DLL candle_fd_frame_read(candle_handle hdev, candle_fd_frame_t *frame, uint32_t timeout_ms);
+/* Reads the own interface of channel ch (candle_channel_has_interface()). */
+bool __stdcall DLL candle_fd_frame_read_channel(candle_handle hdev, uint8_t ch, candle_fd_frame_t *frame, uint32_t timeout_ms);
 
 candle_frametype_t __stdcall DLL candle_fd_frame_type(candle_fd_frame_t *frame);
 uint32_t __stdcall DLL candle_fd_frame_id(candle_fd_frame_t *frame);

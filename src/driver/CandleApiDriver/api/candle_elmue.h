@@ -34,8 +34,11 @@
  *    really transmitted (ACKed), with that time stamp; the legacy echo is
  *    sent when the frame enters the device's TX FIFO
  *
- * Only single channel devices use it: with this protocol the firmware moves
- * every channel to its own USB interface, but this driver opens interface 0.
+ * With this protocol the firmware moves every channel to its own USB
+ * interface (channel 0 = interface 0, channel N = interface N + 1). On
+ * multi-channel devices the driver opens those interfaces as data-only
+ * devices (candle_device_t.ch_dev), if it knows all their paths; otherwise
+ * the device stays on the legacy protocol.
  * Setting CANGAROO_CANDLE_PROTOCOL=legacy keeps the legacy protocol.
  */
 
@@ -55,7 +58,9 @@ extern "C" {
 /* Largest USB IN transfer of the firmware (MAX_BLOB_SIZE) */
 #define CANDLE_ELMUE_MAX_TRANSFER    2048u
 
-/* Decides at device open whether channel starts will enable the protocol. */
+/* Decides at device open whether channel starts will enable the protocol:
+ * the device advertises it and, with several channels, every channel
+ * interface path is known. */
 bool candle_elmue_supported(const candle_device_t *dev);
 
 /* Takes the bytes of one completed USB IN transfer (a blob or one message). */
@@ -63,7 +68,8 @@ void candle_elmue_load(candle_device_t *dev, const uint8_t *buf, DWORD len);
 
 /* Next CAN frame, TX echo or error from the loaded transfer, converted to the
  * legacy frame layout: RX frames get echo_id 0xFFFFFFFF, TX echoes the marker
- * as echo_id, errors CANDLE_ID_ERR in can_id. Returns false when nothing is
+ * as echo_id, errors CANDLE_ID_ERR in can_id, channel = dev->elmue_channel
+ * (the messages carry none). Returns false when nothing is
  * left. String and bus load messages are logged or stored and skipped. */
 bool candle_elmue_next_frame(candle_device_t *dev, candle_fd_frame_t *frame);
 

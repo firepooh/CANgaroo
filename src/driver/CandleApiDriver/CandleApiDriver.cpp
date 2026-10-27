@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <cwctype>
+#include <map>
 #include <numeric>
 #include <vector>
 #include <QString>
@@ -79,6 +80,19 @@ static std::wstring baseDevicePath(const std::wstring &path)
     return result;
 }
 
+
+// USB interface number of a composite device path ("&mi_02" -> 2), 0 if the
+// path has none.
+static int interfaceNumberFromPath(const std::wstring &path)
+{
+    std::wstring lower = path;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
+    const auto pos = lower.find(L"&mi_");
+    if (pos == std::wstring::npos) {
+        return 0;
+    }
+    return static_cast<int>(wcstoul(lower.c_str() + pos + 4, nullptr, 16));
+}
 
 // Map known VID/PID combinations to human-readable product names.
 // The Windows device path is lower-case and contains "vid_XXXX&pid_XXXX".
@@ -172,7 +186,46 @@ bool CandleApiDriver::update()
     };
     std::vector<FoundDevice> found;
 
+    // Interface paths in interface order, so the first path of an adapter is
+    // its interface 0 (control requests, channel 0) and the others are the
+    // per-channel interfaces of the ElmueSoft protocol.
+    struct ListEntry {
+        uint8_t index;
+        std::wstring path;
+        std::wstring baseKey;
+        int interfaceNumber;
+    };
+    std::vector<ListEntry> entries;
     for (uint8_t i = 0; i < num_devices; i++) {
+        candle_handle dev;
+        if (!candle_dev_get(clist, i, &dev)) {
+            log_error(QStringLiteral("CandleAPI: candle_dev_get failed for index %1").arg(static_cast<int>(i)));
+            continue;
+        }
+        const std::wstring path(candle_dev_get_path(dev));
+        entries.push_back({ i, path, baseDevicePath(path), interfaceNumberFromPath(path) });
+        candle_dev_free(dev);
+    }
+    std::stable_sort(entries.begin(), entries.end(), [](const ListEntry &a, const ListEntry &b) {
+        return a.interfaceNumber < b.interfaceNumber;
+    });
+
+    // CANable 2.5 layout: interface 1 is firmware update, channel N > 0 is
+    // interface N + 1
+    std::map<std::wstring, std::vector<std::pair<uint8_t, std::wstring>>> channelPaths;
+
+    for (const ListEntry &entry : entries) {
+        const uint8_t i = entry.index;
+
+        // Skip additional USB interfaces of a device we already processed,
+        // but keep their paths for the ElmueSoft protocol.
+        if (std::any_of(found.begin(), found.end(), [&](const FoundDevice &f) { return f.baseKey == entry.baseKey; })) {
+            if (entry.interfaceNumber >= 2 && entry.interfaceNumber <= CANDLE_MAX_CHANNELS) {
+                channelPaths[entry.baseKey].emplace_back(static_cast<uint8_t>(entry.interfaceNumber - 1), entry.path);
+            }
+            continue;
+        }
+
         candle_handle dev;
         if (!candle_dev_get(clist, i, &dev)) {
             log_error(QStringLiteral("CandleAPI: candle_dev_get failed for index %1").arg(static_cast<int>(i)));
@@ -194,19 +247,12 @@ bool CandleApiDriver::update()
         }
 
         const std::wstring devPath(candle_dev_get_path(dev));
-        const std::wstring baseKey = baseDevicePath(devPath);
-
-        // Skip additional USB interfaces of a device we already processed.
-        // On composite devices each CAN channel has its own interface path
-        // (MI_00, MI_02, …) but they all share the same USB endpoint and
-        // the firmware reports the total icount from any interface.
-        if (std::any_of(found.begin(), found.end(), [&](const FoundDevice &f) { return f.baseKey == baseKey; })) {
-            candle_dev_close(dev);
-            candle_dev_free(dev);
-            continue;
-        }
+        const std::wstring baseKey = entry.baseKey;
 
         // Create a single shared handle for all channels on this device.
+        // On composite devices each CAN channel has its own interface path
+        // (MI_00, MI_02, …); the legacy protocol sends all channels through
+        // interface 0 and the firmware reports the total icount there.
         // candle_dev_get() allocates a fresh candle_device_t; we pre-populate
         // its capability fields so getAvailableBitrates() works before open().
         candle_handle shared_handle;
@@ -225,6 +271,15 @@ bool CandleApiDriver::update()
         candle_dev_free(dev);
 
         found.push_back({ shared_handle, devPath, baseKey, num_channels, usbSerialFromPath(devPath) });
+    }
+
+    // The channel interfaces let candle_dev_open() choose the ElmueSoft protocol
+    for (const FoundDevice &f : found) {
+        for (const auto &[ch, path] : channelPaths[f.baseKey]) {
+            if (ch < f.channels) {
+                candle_dev_set_channel_path(f.handle, ch, path.c_str());
+            }
+        }
     }
 
     // Fixed numbers from the adapter table, the rest in USB serial order, so the

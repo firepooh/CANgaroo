@@ -51,51 +51,64 @@ QString CandleSharedDevice::firmwareVersion() const
 void CandleSharedDevice::startReader()
 {
     readerRunning.store(true, std::memory_order_relaxed);
-    readerThread = std::thread([this]()
-    {
-        // The adapter only buffers ~70 frames (16 ms at full bus load) and the
-        // queued URBs another 240 ms: if this thread waits behind busy threads
-        // for longer, the adapter drops frames (APP_UsbInOverflow). It mostly
-        // sleeps in the USB wait, so a high priority costs no CPU.
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
-
-        while (readerRunning.load(std::memory_order_relaxed)) {
-            candle_fd_frame_t frame;
-            // Short timeout so the loop checks readerRunning frequently.
-            if (!candle_fd_frame_read(handle, &frame, 50)) {
-                continue;
-            }
-            const candle_frametype_t frameType = candle_fd_frame_type(&frame);
-            // Echoes are TX confirmations: CandleApiInterface only shows a sent
-            // frame once the device has echoed it back.
-            if (frameType != CANDLE_FRAMETYPE_RECEIVE
-                    && frameType != CANDLE_FRAMETYPE_ERROR
-                    && frameType != CANDLE_FRAMETYPE_ECHO) {
-                continue;
-            }
-            const uint8_t ch = frame.channel;
-            if (ch < MAX_CHANNELS) {
-                CandleQueuedFrame queuedFrame;
-                queuedFrame.frame = frame;
-                queuedFrame.timestampValid = deviceTimestampToHostUs(candle_fd_frame_timestamp_us(&frame),
-                                                                     queuedFrame.timestampUs);
-
-                QMutexLocker lock(&queueMutex);
-                rxQueues[ch].append(queuedFrame);
-                queueCond.wakeAll();
-            } else {
-                log_error(QStringLiteral("CandleAPI: received frame for invalid channel %1").arg(static_cast<int>(ch)));
-            }
+    readerThreads.emplace_back(&CandleSharedDevice::readLoop, this, 0);
+    for (uint8_t ch = 1; ch < MAX_CHANNELS; ch++) {
+        if (candle_channel_has_interface(handle, ch)) {
+            readerThreads.emplace_back(&CandleSharedDevice::readLoop, this, ch);
         }
-    });
+    }
+}
+
+void CandleSharedDevice::readLoop(uint8_t interfaceChannel)
+{
+    // The adapter only buffers ~70 frames (16 ms at full bus load) and the
+    // queued URBs another 240 ms: if this thread waits behind busy threads
+    // for longer, the adapter drops frames (APP_UsbInOverflow). It mostly
+    // sleeps in the USB wait, so a high priority costs no CPU.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+
+    while (readerRunning.load(std::memory_order_relaxed)) {
+        candle_fd_frame_t frame;
+        // Short timeout so the loop checks readerRunning frequently.
+        const bool got = (interfaceChannel == 0)
+                ? candle_fd_frame_read(handle, &frame, 50)
+                : candle_fd_frame_read_channel(handle, interfaceChannel, &frame, 50);
+        if (!got) {
+            continue;
+        }
+        const candle_frametype_t frameType = candle_fd_frame_type(&frame);
+        // Echoes are TX confirmations: CandleApiInterface only shows a sent
+        // frame once the device has echoed it back.
+        if (frameType != CANDLE_FRAMETYPE_RECEIVE
+                && frameType != CANDLE_FRAMETYPE_ERROR
+                && frameType != CANDLE_FRAMETYPE_ECHO) {
+            continue;
+        }
+        const uint8_t ch = frame.channel;
+        if (ch < MAX_CHANNELS) {
+            CandleQueuedFrame queuedFrame;
+            queuedFrame.frame = frame;
+            queuedFrame.timestampValid = deviceTimestampToHostUs(candle_fd_frame_timestamp_us(&frame),
+                                                                 queuedFrame.timestampUs);
+
+            QMutexLocker lock(&queueMutex);
+            rxQueues[ch].append(queuedFrame);
+            queueCond.wakeAll();
+        } else {
+            log_error(QStringLiteral("CandleAPI: received frame for invalid channel %1").arg(static_cast<int>(ch)));
+        }
+    }
 }
 
 void CandleSharedDevice::stopReader()
 {
     readerRunning.store(false, std::memory_order_relaxed);
-    if (readerThread.joinable()) {
-        readerThread.join();
+    for (std::thread &t : readerThreads) {
+        if (t.joinable()) {
+            t.join();
+        }
     }
+    readerThreads.clear();
     QMutexLocker lock(&queueMutex);
     for (auto &q : rxQueues) {
         q.clear();

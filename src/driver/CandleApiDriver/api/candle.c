@@ -379,10 +379,11 @@ wchar_t __stdcall DLL *candle_dev_get_path(candle_handle hdev)
     }
 }
 
-static bool candle_dev_interal_open(candle_handle hdev)
-{
-    candle_device_t *dev = (candle_device_t*)hdev;
+static void candle_release_open_handles(candle_device_t *dev);
 
+/* Opens the WinUSB handle of dev->path and finds its bulk IN / OUT pipes. */
+static bool candle_open_pipes(candle_device_t *dev)
+{
     memset(dev->rxevents, 0, sizeof(dev->rxevents));
     memset(dev->rxurbs, 0, sizeof(dev->rxurbs));
 
@@ -462,54 +463,6 @@ static bool candle_dev_interal_open(candle_handle hdev)
         goto winusb_free;
     }
 
-    if (!candle_ctrl_set_host_format(dev)) {
-        goto winusb_free;
-    }
-
-    if (!candle_ctrl_get_config(dev, &dev->dconf)) {
-        goto winusb_free;
-    }
-    candle_logf(L"device config channels=%u sw=0x%08x hw=0x%08x",
-                dev->dconf.icount + 1,
-                dev->dconf.sw_version,
-                dev->dconf.hw_version);
-
-        if (!candle_ctrl_get_capability(dev, 0, &dev->bt_const)) {
-        dev->last_error = CANDLE_ERR_GET_BITTIMING_CONST;
-        goto winusb_free;
-    }
-    candle_logf(L"cap ch0 feature=0x%08x fclk=%u tseg1=%u..%u tseg2=%u..%u sjw=%u brp=%u..%u inc=%u",
-                dev->bt_const.feature,
-                dev->bt_const.fclk_can,
-                dev->bt_const.tseg1_min,
-                dev->bt_const.tseg1_max,
-                dev->bt_const.tseg2_min,
-                dev->bt_const.tseg2_max,
-                dev->bt_const.sjw_max,
-                dev->bt_const.brp_min,
-                dev->bt_const.brp_max,
-                dev->bt_const.brp_inc);
-
-    /* Query capabilities for each channel on multi-channel devices */
-    uint8_t num_channels = dev->dconf.icount + 1;
-    if (num_channels > 8) num_channels = 8;
-    for (uint8_t ch = 0; ch < num_channels; ch++) {
-        if (!candle_ctrl_get_capability(dev, ch, &dev->ch_caps[ch])) {
-            /* Fall back to channel 0 capabilities for this channel */
-            memcpy(&dev->ch_caps[ch], &dev->bt_const, sizeof(candle_capability_t));
-            candle_logf(L"cap ch%u failed, falling back to ch0", ch);
-        } else {
-            candle_logf(L"cap ch%u feature=0x%08x fclk=%u",
-                        ch,
-                        dev->ch_caps[ch].feature,
-                        dev->ch_caps[ch].fclk_can);
-        }
-    }
-
-    dev->elmue_capable = candle_elmue_supported(dev);
-    dev->elmue_active = false;
-    candle_logf(L"elmue protocol %ls", dev->elmue_capable ? L"supported" : L"not used");
-
     /* Pre-allocate a manual-reset event for timed overlapped writes.  Reusing
      * one event per device (writes are serialised by writeMutex) avoids
      * per-frame CreateEvent overhead at high CAN frame rates. */
@@ -530,7 +483,75 @@ close_handle:
     CloseHandle(dev->deviceHandle);
     dev->deviceHandle = NULL;
     return false;
+}
 
+static bool candle_dev_interal_open(candle_handle hdev)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+
+    if (!candle_open_pipes(dev)) {
+        return false;
+    }
+
+    if (!candle_ctrl_set_host_format(dev)) {
+        goto fail;
+    }
+
+    if (!candle_ctrl_get_config(dev, &dev->dconf)) {
+        goto fail;
+    }
+    candle_logf(L"device config channels=%u sw=0x%08x hw=0x%08x",
+                dev->dconf.icount + 1,
+                dev->dconf.sw_version,
+                dev->dconf.hw_version);
+
+    if (!candle_ctrl_get_capability(dev, 0, &dev->bt_const)) {
+        dev->last_error = CANDLE_ERR_GET_BITTIMING_CONST;
+        goto fail;
+    }
+    candle_logf(L"cap ch0 feature=0x%08x fclk=%u tseg1=%u..%u tseg2=%u..%u sjw=%u brp=%u..%u inc=%u",
+                dev->bt_const.feature,
+                dev->bt_const.fclk_can,
+                dev->bt_const.tseg1_min,
+                dev->bt_const.tseg1_max,
+                dev->bt_const.tseg2_min,
+                dev->bt_const.tseg2_max,
+                dev->bt_const.sjw_max,
+                dev->bt_const.brp_min,
+                dev->bt_const.brp_max,
+                dev->bt_const.brp_inc);
+
+    /* Query capabilities for each channel on multi-channel devices */
+    uint8_t num_channels = dev->dconf.icount + 1;
+    if (num_channels > CANDLE_MAX_CHANNELS) num_channels = CANDLE_MAX_CHANNELS;
+    for (uint8_t ch = 0; ch < num_channels; ch++) {
+        if (!candle_ctrl_get_capability(dev, ch, &dev->ch_caps[ch])) {
+            /* Fall back to channel 0 capabilities for this channel */
+            memcpy(&dev->ch_caps[ch], &dev->bt_const, sizeof(candle_capability_t));
+            candle_logf(L"cap ch%u failed, falling back to ch0", ch);
+        } else {
+            candle_logf(L"cap ch%u feature=0x%08x fclk=%u",
+                        ch,
+                        dev->ch_caps[ch].feature,
+                        dev->ch_caps[ch].fclk_can);
+        }
+    }
+
+    dev->elmue_capable = candle_elmue_supported(dev);
+    dev->elmue_active = false;
+    dev->elmue_only = false;
+    dev->elmue_channel = 0;
+    candle_logf(L"elmue protocol %ls", dev->elmue_capable ? L"supported" : L"not used");
+
+    dev->last_error = CANDLE_ERR_OK;
+    return true;
+
+fail: {
+        const candle_err_t last_error = dev->last_error;
+        candle_release_open_handles(dev);
+        dev->last_error = last_error;
+        return false;
+    }
 }
 
 static bool candle_prepare_read(candle_device_t *dev, unsigned urb_num)
@@ -673,8 +694,11 @@ static bool candle_alloc_rxurbs(candle_device_t *dev)
     return true;
 }
 
+static void candle_close_channel_devs(candle_device_t *dev);
+
 static void candle_release_open_handles(candle_device_t *dev)
 {
+    candle_close_channel_devs(dev);
     candle_close_rxurbs(dev);
 
     if (dev->txEvent) {
@@ -694,41 +718,98 @@ static void candle_release_open_handles(candle_device_t *dev)
 }
 
 
+/* Allocates the URBs of an opened device and queues all reads. On failure
+ * dev->last_error is set and the caller releases the handles. */
+static bool candle_start_rxurbs(candle_device_t *dev)
+{
+    dev->rx_next_urb = 0;
+    if (!candle_alloc_rxurbs(dev)) {
+        dev->last_error = CANDLE_ERR_MALLOC;
+        return false;
+    }
+    for (unsigned i=0; i<CANDLE_URB_COUNT; i++) {
+        HANDLE ev = CreateEvent(NULL, true, false, NULL);
+        if (ev == NULL) {
+            dev->last_error = CANDLE_ERR_MALLOC;
+            return false;
+        }
+        dev->rxevents[i] = ev;
+        dev->rxurbs[i].ovl.hEvent = ev;
+        if (!candle_prepare_read(dev, i)) {
+            return false; // keep last_error from prepare_read call
+        }
+    }
+    dev->last_error = CANDLE_ERR_OK;
+    return true;
+}
+
+static void candle_close_channel_devs(candle_device_t *dev)
+{
+    for (unsigned ch = 1; ch < CANDLE_MAX_CHANNELS; ch++) {
+        candle_device_t *cd = dev->ch_dev[ch];
+        if (cd != NULL) {
+            dev->ch_dev[ch] = NULL;
+            candle_release_open_handles(cd);
+            free(cd);
+        }
+    }
+}
+
+/* ElmueSoft multi-channel device: open the USB interface of every channel
+ * except 0 as a data-only device. Channel N's data never goes through
+ * interface 0 with this protocol. */
+static bool candle_open_channel_devs(candle_device_t *dev)
+{
+    for (unsigned ch = 1; ch <= dev->dconf.icount && ch < CANDLE_MAX_CHANNELS; ch++) {
+        candle_device_t *cd = (candle_device_t *)calloc(1, sizeof(candle_device_t));
+        if (cd == NULL) {
+            dev->last_error = CANDLE_ERR_MALLOC;
+            return false;
+        }
+        dev->ch_dev[ch] = cd;
+        wcscpy(cd->path, dev->ch_path[ch]);
+        cd->dconf = dev->dconf;
+        cd->bt_const = dev->bt_const;
+        cd->elmue_capable = true;       /* 2 KB URBs for blobs */
+        cd->elmue_only = true;
+        cd->elmue_channel = (uint8_t)ch;
+
+        if (!candle_open_pipes(cd) || !candle_start_rxurbs(cd)) {
+            candle_logf(L"elmue: channel %u interface %ls open failed (error %u)", ch, cd->path, cd->last_error);
+            dev->last_error = cd->last_error;
+            return false;
+        }
+        candle_logf(L"elmue: channel %u uses interface %u", ch, cd->interfaceNumber);
+    }
+    /* interface 0 now only carries ElmueSoft messages of channel 0 */
+    dev->elmue_only = true;
+    return true;
+}
+
 bool __stdcall DLL candle_dev_open(candle_handle hdev)
 {
     candle_device_t *dev = (candle_device_t*)hdev;
 
-    if (candle_dev_interal_open(dev)) {
-        dev->rx_next_urb = 0;
-        if (!candle_alloc_rxurbs(dev)) {
-            candle_release_open_handles(dev);
-            dev->last_error = CANDLE_ERR_MALLOC;
-            return false;
-        }
-        for (unsigned i=0; i<CANDLE_URB_COUNT; i++) {
-            HANDLE ev = CreateEvent(NULL, true, false, NULL);
-            if (ev == NULL) {
-                dev->last_error = CANDLE_ERR_MALLOC;
-                candle_err_t last_error = dev->last_error;
-                candle_release_open_handles(dev);
-                dev->last_error = last_error;
-                return false;
-            }
-            dev->rxevents[i] = ev;
-            dev->rxurbs[i].ovl.hEvent = ev;
-            if (!candle_prepare_read(dev, i)) {
-                candle_err_t last_error = dev->last_error;
-                candle_release_open_handles(dev);
-                dev->last_error = last_error;
-                return false; // keep last_error from prepare_read call
-            }
-        }
-        dev->last_error = CANDLE_ERR_OK;
-        return true;
-    } else {
+    if (!candle_dev_interal_open(dev)) {
         return false; // keep last_error from open_device call
     }
 
+    /* Before the URBs of interface 0: their size depends on the protocol, and
+     * if a channel interface cannot be opened the device stays legacy. */
+    if (dev->elmue_capable && dev->dconf.icount > 0 && !candle_open_channel_devs(dev)) {
+        candle_close_channel_devs(dev);
+        dev->elmue_capable = false;
+        dev->elmue_only = false;
+        candle_logf(L"elmue: channel interfaces unavailable, using the legacy protocol");
+    }
+
+    if (!candle_start_rxurbs(dev)) {
+        candle_err_t last_error = dev->last_error;
+        candle_release_open_handles(dev);
+        dev->last_error = last_error;
+        return false;
+    }
+    return true;
 }
 
 bool __stdcall DLL candle_dev_get_timestamp_us(candle_handle hdev, uint32_t *timestamp_us)
@@ -748,8 +829,36 @@ bool __stdcall DLL candle_dev_close(candle_handle hdev)
 
 bool __stdcall DLL candle_dev_free(candle_handle hdev)
 {
+    if (hdev != NULL) {
+        candle_close_channel_devs((candle_device_t *)hdev);
+    }
     free(hdev);
     return true;
+}
+
+bool __stdcall DLL candle_dev_set_channel_path(candle_handle hdev, uint8_t ch, const wchar_t *path)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+    if (dev == NULL || ch == 0 || ch >= CANDLE_MAX_CHANNELS || path == NULL) {
+        return false;
+    }
+    return SUCCEEDED(StringCchCopyW(dev->ch_path[ch], 256, path));
+}
+
+bool __stdcall DLL candle_channel_has_interface(candle_handle hdev, uint8_t ch)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+    return ch > 0 && ch < CANDLE_MAX_CHANNELS && dev->ch_dev[ch] != NULL;
+}
+
+/* The device that carries the frames of a channel: its own interface on an
+ * ElmueSoft multi-channel device, else interface 0 */
+static candle_device_t *candle_data_dev(candle_device_t *dev, uint8_t ch)
+{
+    if (ch > 0 && ch < CANDLE_MAX_CHANNELS && dev->ch_dev[ch] != NULL) {
+        return dev->ch_dev[ch];
+    }
+    return dev;
 }
 
 candle_err_t __stdcall DLL candle_dev_last_error(candle_handle hdev)
@@ -906,9 +1015,11 @@ bool __stdcall DLL candle_channel_start(candle_handle hdev, uint8_t ch, uint32_t
                 rc ? 1 : 0,
                 dev->last_error);
 
-    dev->elmue_active = rc && dev->elmue_capable;
-    dev->elmue_timestamps = (flags & CANDLE_MODE_HW_TIMESTAMP) != 0;
-    dev->elmue_rx_left = 0;
+    /* The interface that carries this channel's frames parses and sends them */
+    candle_device_t *data = candle_data_dev(dev, ch);
+    data->elmue_active = rc && dev->elmue_capable;
+    data->elmue_timestamps = (flags & CANDLE_MODE_HW_TIMESTAMP) != 0;
+    data->elmue_rx_left = 0;
     return rc;
 }
 
@@ -916,8 +1027,9 @@ bool __stdcall DLL candle_channel_stop(candle_handle hdev, uint8_t ch)
 {
     // TODO ensure device is open, check channel count..
     candle_device_t *dev = (candle_device_t*)hdev;
-    dev->elmue_active = false;
-    dev->elmue_rx_left = 0;
+    candle_device_t *data = candle_data_dev(dev, ch);
+    data->elmue_active = false;
+    data->elmue_rx_left = 0;
     return candle_ctrl_set_device_mode(dev, ch, CANDLE_DEVMODE_RESET, 0);
 }
 
@@ -925,6 +1037,12 @@ bool __stdcall DLL candle_dev_elmue_active(candle_handle hdev)
 {
     candle_device_t *dev = (candle_device_t*)hdev;
     return dev->elmue_active;
+}
+
+bool __stdcall DLL candle_channel_elmue_active(candle_handle hdev, uint8_t ch)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+    return candle_data_dev(dev, ch)->elmue_active;
 }
 
 /* Write len bytes from buf to the OUT pipe, aborting after 300 ms.
@@ -972,7 +1090,8 @@ static bool candle_elmue_send(candle_device_t *dev, const candle_fd_frame_t *fra
 bool __stdcall DLL candle_frame_send(candle_handle hdev, uint8_t ch, candle_frame_t *frame)
 {
     candle_device_t *dev = (candle_device_t*)hdev;
-    if (dev->elmue_active) {
+    candle_device_t *data = candle_data_dev(dev, ch);
+    if (data->elmue_active) {
         candle_fd_frame_t fd_frame;
         memset(&fd_frame, 0, sizeof(fd_frame));
         fd_frame.echo_id = frame->echo_id;
@@ -980,7 +1099,9 @@ bool __stdcall DLL candle_frame_send(candle_handle hdev, uint8_t ch, candle_fram
         fd_frame.can_dlc = frame->can_dlc;
         fd_frame.flags = frame->flags;
         memcpy(fd_frame.data, frame->data, sizeof(frame->data));
-        return candle_elmue_send(dev, &fd_frame, false);
+        const bool rc = candle_elmue_send(data, &fd_frame, false);
+        dev->last_error = data->last_error;
+        return rc;
     }
     frame->echo_id = 0;
     frame->channel = ch;
@@ -1096,8 +1217,11 @@ bool __stdcall DLL candle_channel_set_data_timing(candle_handle hdev, uint8_t ch
 bool __stdcall DLL candle_fd_frame_send(candle_handle hdev, uint8_t ch, candle_fd_frame_t *frame)
 {
     candle_device_t *dev = (candle_device_t*)hdev;
-    if (dev->elmue_active) {
-        return candle_elmue_send(dev, frame, (frame->flags & CANDLE_FRAME_FLAG_FD) != 0);
+    candle_device_t *data = candle_data_dev(dev, ch);
+    if (data->elmue_active) {
+        const bool rc = candle_elmue_send(data, frame, (frame->flags & CANDLE_FRAME_FLAG_FD) != 0);
+        dev->last_error = data->last_error;
+        return rc;
     }
     frame->echo_id = 0;
     frame->channel = ch;
@@ -1110,8 +1234,10 @@ bool __stdcall DLL candle_fd_frame_read(candle_handle hdev, candle_fd_frame_t *f
 {
     candle_device_t *dev = (candle_device_t*)hdev;
 
+    const bool elmue = dev->elmue_active || dev->elmue_only;
+
     /* ElmueSoft blob: hand out the frames left from the last transfer first */
-    if (dev->elmue_active && candle_elmue_next_frame(dev, frame)) {
+    if (elmue && candle_elmue_next_frame(dev, frame)) {
         dev->last_error = CANDLE_ERR_OK;
         return true;
     }
@@ -1138,7 +1264,7 @@ bool __stdcall DLL candle_fd_frame_read(candle_handle hdev, candle_fd_frame_t *f
     dev->rxurbs[urb_num].pending = false;
     candle_advance_urb(dev, urb_num);
 
-    if (dev->elmue_active) {
+    if (elmue) {
         /* Copy the transfer out and queue the URB again right away, so the
          * host controller keeps reading while the messages are handed out. */
         candle_elmue_load(dev, dev->rxurbs[urb_num].buf, bytes_transfered);
@@ -1238,6 +1364,17 @@ bool __stdcall DLL candle_fd_frame_read(candle_handle hdev, candle_fd_frame_t *f
                 frame->timestamp_us);
 
     return candle_prepare_read(dev, urb_num);
+}
+
+bool __stdcall DLL candle_fd_frame_read_channel(candle_handle hdev, uint8_t ch, candle_fd_frame_t *frame, uint32_t timeout_ms)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+    candle_device_t *data = candle_data_dev(dev, ch);
+    if (data == dev) {
+        dev->last_error = CANDLE_ERR_DEV_OUT_OF_RANGE;
+        return false;
+    }
+    return candle_fd_frame_read(data, frame, timeout_ms);
 }
 
 candle_frametype_t __stdcall DLL candle_fd_frame_type(candle_fd_frame_t *frame)

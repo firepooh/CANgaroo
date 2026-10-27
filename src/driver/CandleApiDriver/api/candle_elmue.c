@@ -78,7 +78,20 @@ bool candle_elmue_supported(const candle_device_t *dev)
         return false;
     }
     const uint32_t need = CANDLE_ELMUE_FLAG_PROTOCOL | CANDLE_ELMUE_FLAG_BLOBS;
-    return dev->dconf.icount == 0 && (dev->bt_const.feature & need) == need;
+    if ((dev->bt_const.feature & need) != need) {
+        return false;
+    }
+    /* With more channels the firmware sends each channel through its own
+     * interface: all of them must be known (candle_dev_set_channel_path) */
+    if (dev->dconf.icount >= CANDLE_MAX_CHANNELS) {
+        return false;
+    }
+    for (unsigned ch = 1; ch <= dev->dconf.icount; ch++) {
+        if (dev->ch_path[ch][0] == 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void candle_elmue_load(candle_device_t *dev, const uint8_t *buf, DWORD len)
@@ -119,6 +132,7 @@ bool candle_elmue_next_frame(candle_device_t *dev, candle_fd_frame_t *frame)
 
         memset(frame, 0, sizeof(*frame));
         frame->echo_id = 0xFFFFFFFF;
+        frame->channel = dev->elmue_channel;
 
         switch (type) {
         case ELMUE_MSG_RX_FRAME: {
