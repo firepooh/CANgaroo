@@ -48,8 +48,8 @@ private:
     Backend &_backend;
     MonitorBuffer *_buffer;
     MonitorTable *_table;
-    QToolButton *_scrollButton;
-    QToolButton *_timeAbsButton;
+    QComboBox *_viewBox;      // Fixed / Scroll
+    QComboBox *_timeBox;      // Delta / Relative
     QToolButton *_pauseButton;
     QToolButton *_filterButton;
     QCheckBox *_expandBox;

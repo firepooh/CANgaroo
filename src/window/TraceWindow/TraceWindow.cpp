@@ -262,8 +262,8 @@ void TraceWindow::setMonitorPage(QWidget *page)
 
 void TraceWindow::applyMonitorToolbarLayout()
 {
-    // Same look and order as the Monitor tab's toolbar: compact controls packed to
-    // the left, view switches first, then the display options, then search and XCP
+    // Same order and names as the Monitor tab's toolbar:
+    // View, Time | Filter | Find | Clear | own items (Autoscroll, XCP IDs)
     QHBoxLayout *bar = ui->horizontalLayout;
     while (QLayoutItem *item = bar->takeAt(0)) {
         delete item;    // only the layout item; the widgets stay
@@ -272,27 +272,36 @@ void TraceWindow::applyMonitorToolbarLayout()
     bar->setContentsMargins(4, 4, 4, 2);
     bar->setSpacing(6);
 
+    // Push buttons as narrow as the Monitor tab's tool buttons (Fusion makes them 80 px at least)
     for (QPushButton *button : { ui->TraceClearpushButton, ui->filterButton, ui->xcpSessionsButton }) {
         button->setMinimumHeight(0);
         button->setIconSize(QSize(14, 14));
+        const int icon = button->icon().isNull() ? 0 : button->iconSize().width() + 4;
+        button->setFixedWidth(button->fontMetrics().horizontalAdvance(button->text()) + icon + 20);
     }
     ui->filterLineEdit->setMinimumHeight(0);
     ui->filterLineEdit->setMaximumWidth(220);
     ui->filterLineEdit->setClearButtonEnabled(true);
+    ui->label->setText(tr("Time:"));
+    // Same widths as the Monitor tab's View / Time combos (MonitorView)
+    ui->cbViewMode->setFixedWidth(fontMetrics().horizontalAdvance(QStringLiteral("Rolling Log")) + 48);
+    ui->cbTimestampMode->setFixedWidth(fontMetrics().horizontalAdvance(QStringLiteral("Absolute (UTC)")) + 48);
     ui->label_2->setText(tr("Find:"));
+    ui->TraceClearpushButton->setToolTip(tr("Clear the whole trace: the Monitor and every other tab start empty"));
 
-    bar->addWidget(ui->cbAutoscroll);
-    bar->addWidget(ui->TraceClearpushButton);
-    bar->addWidget(ui->filterButton);
-    bar->addSpacing(16);
     bar->addWidget(ui->label_3);
     bar->addWidget(ui->cbViewMode);
     bar->addWidget(ui->label);
     bar->addWidget(ui->cbTimestampMode);
     bar->addSpacing(16);
+    bar->addWidget(ui->filterButton);
+    bar->addSpacing(16);
     bar->addWidget(ui->label_2);
     bar->addWidget(ui->filterLineEdit);
     bar->addSpacing(16);
+    bar->addWidget(ui->TraceClearpushButton);
+    bar->addSpacing(16);
+    bar->addWidget(ui->cbAutoscroll);
     bar->addWidget(ui->xcpSessionsButton);
     bar->addWidget(ui->xcpStatusLabel);
     bar->addStretch(1);

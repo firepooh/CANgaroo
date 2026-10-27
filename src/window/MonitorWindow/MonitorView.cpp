@@ -59,17 +59,24 @@ MonitorView::MonitorView(Backend &backend, QWidget *parent)
     _buffer = new MonitorBuffer(backend, this);
     _table = new MonitorTable(_buffer, this);
 
-    _scrollButton = makeButton(tr("Scroll"), true, this);
-    _scrollButton->setToolTip(tr("On: every frame in arrival order. Off: one row per ID"));
+    // Same order and names as the UDS / J1939 / XCP tabs: View, Time | Filter | Find | Clear | own items
+    _viewBox = new QComboBox(this);
+    _viewBox->addItem(tr("Fixed"), false);
+    _viewBox->addItem(tr("Scroll"), true);
+    _viewBox->setToolTip(tr("Fixed: one row per ID. Scroll: every frame in arrival order"));
     _expandBox = new QCheckBox(tr("Expand"), this);
     _expandBox->setChecked(true);
     _expandBox->setToolTip(tr("Show the data lines and signals of every row"));
-    _timeAbsButton = makeButton(tr("Time Abs"), true, this);
-    _timeAbsButton->setToolTip(tr("On: time since measurement start. Off: time since the previous frame"));
+    _timeBox = new QComboBox(this);
+    _timeBox->addItem(tr("Delta"), false);
+    _timeBox->addItem(tr("Relative"), true);
+    _timeBox->setToolTip(tr("Delta: time since the previous frame. Relative: time since measurement start"));
     _pauseButton = makeButton(tr("Pause"), true, this);
     _pauseButton->setToolTip(tr("Freeze this view; frames are still recorded"));
-    QToolButton *eraseButton = makeButton(tr("Erase"), false, this);
-    eraseButton->setToolTip(tr("Clear this view only"));
+    QToolButton *eraseButton = makeButton(tr("Clear"), false, this);
+    eraseButton->setIcon(AppHelpers::themedIcon("user-trash-full", ":/assets/icons/edit-clear-symbolic.svg"));
+    eraseButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    eraseButton->setToolTip(tr("Clear this Monitor view only; the trace and the other tabs keep their frames"));
     _filterButton = makeButton(tr("Filter"), false, this);
     _filterButton->setIcon(AppHelpers::themedIcon("view-filter", ":/assets/filter-symbolic.svg"));
     _filterButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -98,21 +105,28 @@ MonitorView::MonitorView(Backend &backend, QWidget *parent)
     auto *toolbar = new QHBoxLayout();
     toolbar->setContentsMargins(4, 4, 4, 2);
     toolbar->setSpacing(6);
-    toolbar->addWidget(_scrollButton);
-    toolbar->addWidget(_expandBox);
-    toolbar->addWidget(_timeAbsButton);
-    toolbar->addWidget(_pauseButton);
-    toolbar->addWidget(eraseButton);
-    toolbar->addWidget(_filterButton);
+    // Same widths as the View / Time combos of the other tabs (TraceWindow::applyMonitorToolbarLayout)
+    _viewBox->setFixedWidth(fontMetrics().horizontalAdvance(QStringLiteral("Rolling Log")) + 48);
+    _timeBox->setFixedWidth(fontMetrics().horizontalAdvance(QStringLiteral("Absolute (UTC)")) + 48);
+    toolbar->addWidget(new QLabel(tr("View:"), this));
+    toolbar->addWidget(_viewBox);
+    toolbar->addWidget(new QLabel(tr("Time:"), this));
+    toolbar->addWidget(_timeBox);
     toolbar->addSpacing(16);
-    toolbar->addWidget(new QLabel(tr("Refresh:"), this));
-    toolbar->addWidget(_refreshBox);
+    toolbar->addWidget(_filterButton);
     toolbar->addSpacing(16);
     toolbar->addWidget(new QLabel(tr("Find:"), this));
     toolbar->addWidget(_findColumn);
     toolbar->addWidget(_findText);
     toolbar->addWidget(prevButton);
     toolbar->addWidget(nextButton);
+    toolbar->addSpacing(16);
+    toolbar->addWidget(eraseButton);
+    toolbar->addSpacing(16);
+    toolbar->addWidget(_expandBox);
+    toolbar->addWidget(_pauseButton);
+    toolbar->addWidget(new QLabel(tr("Refresh:"), this));
+    toolbar->addWidget(_refreshBox);
     toolbar->addStretch(1);
 
     auto *layout = new QVBoxLayout(this);
@@ -139,9 +153,10 @@ MonitorView::MonitorView(Backend &backend, QWidget *parent)
     connect(_filterButton, &QToolButton::clicked, this, &MonitorView::openFilterDialog);
     updateFilterButton();
 
-    connect(_scrollButton, &QToolButton::toggled, this, [this](bool on)
+    connect(_viewBox, &QComboBox::currentIndexChanged, this, [this]()
     {
-        _buffer->setMode(on ? MonitorBuffer::Mode::Scroll : MonitorBuffer::Mode::Fixed);
+        const bool scroll = _viewBox->currentData().toBool();
+        _buffer->setMode(scroll ? MonitorBuffer::Mode::Scroll : MonitorBuffer::Mode::Fixed);
         updateSortIndicator();
         emit settingsChanged();
     });
@@ -150,9 +165,9 @@ MonitorView::MonitorView(Backend &backend, QWidget *parent)
         _buffer->setAllExpanded(on);
         emit settingsChanged();
     });
-    connect(_timeAbsButton, &QToolButton::toggled, this, [this](bool on)
+    connect(_timeBox, &QComboBox::currentIndexChanged, this, [this]()
     {
-        _buffer->setAbsoluteTime(on);
+        _buffer->setAbsoluteTime(_timeBox->currentData().toBool());
         emit settingsChanged();
     });
     connect(_refreshBox, &QComboBox::currentIndexChanged, this, [this]()
@@ -248,9 +263,9 @@ void MonitorView::showHeaderMenu(const QPoint &pos)
 
 void MonitorView::saveXML(QDomDocument &xml, QDomElement &el) const
 {
-    el.setAttribute("mode", _scrollButton->isChecked() ? "scroll" : "fixed");
+    el.setAttribute("mode", _viewBox->currentData().toBool() ? "scroll" : "fixed");
     el.setAttribute("expand", _expandBox->isChecked() ? "1" : "0");
-    el.setAttribute("timeAbs", _timeAbsButton->isChecked() ? "1" : "0");
+    el.setAttribute("timeAbs", _timeBox->currentData().toBool() ? "1" : "0");
     el.setAttribute("refreshMs", _refreshBox->currentData().toInt());
     el.setAttribute("findColumn", _findColumn->currentIndex());
     el.setAttribute("header", QString::fromLatin1(_table->header()->saveState().toBase64()));
@@ -285,9 +300,9 @@ void MonitorView::saveXML(QDomDocument &xml, QDomElement &el) const
 
 void MonitorView::loadXML(const QDomElement &el)
 {
-    _scrollButton->setChecked(el.attribute("mode", "fixed") == "scroll");
+    _viewBox->setCurrentIndex(el.attribute("mode", "fixed") == "scroll" ? 1 : 0);
     _expandBox->setChecked(el.attribute("expand", "1") == "1");
-    _timeAbsButton->setChecked(el.attribute("timeAbs", "0") == "1");
+    _timeBox->setCurrentIndex(el.attribute("timeAbs", "0") == "1" ? 1 : 0);
     if (el.hasAttribute("refreshMs")) {
         const int index = _refreshBox->findData(el.attribute("refreshMs").toInt());
         if (index >= 0) { _refreshBox->setCurrentIndex(index); }
