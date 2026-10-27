@@ -51,6 +51,7 @@ shared config; `tests/support/LogStub.cpp` satisfies `core/Log` without `Backend
 | `xcp_decoder/`        | XCP on CAN: CTO commands/responses, byte order from CONNECT, DAQ/ODT from ALLOC_DAQ/ALLOC_ODT and DAQ_KEY_BYTE, XCP before UDS in `ProtocolManager` (packet layouts from ASAM MCD-1 XCP Part 2); A2L `XCP_ON_CAN` IDs (ASAM MCD-2 MC syntax) |
 | `remote_frame_log/`   | Remote frame ring buffer: sequence numbers across evictions, `read` from a cursor, newest-N `readLatest` with filters (remote API contract) |
 | `candle_adapters/`    | Candle adapter table: device numbers per USB serial (table first, then serial order, reserved numbers kept), 16-digit chip-ID key, JSON save/load |
+| `candle_timing/`      | Computed 160 MHz nominal timings (75/80/85/87.5 % for 10k..1M): exact sample point, bitrate within 1 bit/s, FDCAN NBTP limits, BRP 2 first, existing table rows kept |
 
 **Expected values come from outside cangaroo.** The big-endian bug in issue #34
 survived because extract and inject were wrong in mutually cancelling ways, so

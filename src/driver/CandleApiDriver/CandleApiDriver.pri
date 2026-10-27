@@ -5,6 +5,7 @@ SOURCES += \
     $$PWD/CandleApiInterface.cpp \
     $$PWD/CandleSharedDevice.cpp \
     $$PWD/CandleAdapterTable.cpp \
+    $$PWD/CandleTimingCalc.cpp \
     $$PWD/CandleAdapterDialog.cpp \
     $$PWD/api/candle.c \
     $$PWD/api/candle_ctrl_req.c \
@@ -24,6 +25,7 @@ HEADERS += \
     $$PWD/CandleErrorFrame.h \
     $$PWD/CandleSharedDevice.h \
     $$PWD/CandleAdapterTable.h \
+    $$PWD/CandleTimingCalc.h \
     $$PWD/CandleAdapterDialog.h \
     $$PWD/api/candle_ctrl_req.h \
     $$PWD/api/candle_elmue.h \

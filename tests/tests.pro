@@ -21,4 +21,5 @@ SUBDIRS += \
     xcp_decoder \
     remote_frame_log \
     candle_adapters \
+    candle_timing \
     measurement_setup

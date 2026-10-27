@@ -18,6 +18,7 @@
 */
 
 #include "CandleApiInterface.h"
+#include "CandleTimingCalc.h"
 #include "CandleApiDriver.h"
 #include "CandleErrorFrame.h"
 
@@ -74,6 +75,25 @@ CandleApiInterface::CandleApiInterface(CandleApiDriver *driver,
         // rate switches at the BRS sample point (80 % is the CiA 601 value).
         << CandleApiTiming(160000000,  500000, 800,  2, 126, 32)
         << CandleApiTiming(160000000, 1000000, 875,  1, 138, 20);
+
+    // The other 75 / 80 / 85 / 87.5 % rows for the common bitrates are computed
+    // (CandleTimingCalc, BRP 2 first); the rows above stay as they are.
+    {
+        std::vector<std::pair<uint32_t, uint32_t>> existing;
+        for (const auto &t : _timings) {
+            if (t.getBaseClk() == 160000000) {
+                existing.emplace_back(t.getBitrate(), t.getSamplePoint());
+            }
+        }
+        const auto computed = CandleTimingCalc::missing(
+            160000000,
+            { 10000, 20000, 50000, 83333, 100000, 125000, 250000, 500000, 800000, 1000000 },
+            { 750, 800, 850, 875 },
+            existing);
+        for (const CandleNominalTiming &t : computed) {
+            _timings << CandleApiTiming(160000000, t.bitrate, t.samplePoint, t.brp, t.phaseSeg1, t.phaseSeg2);
+        }
+    }
 
     _timings
         // Timings for 80MHz (CANnectivity)
