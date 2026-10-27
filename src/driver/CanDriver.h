@@ -28,6 +28,7 @@
 
 class Backend;
 class BusInterface;
+class QWidget;
 
 using BusInterfaceId = uint16_t;
 using BusInterfaceIdList = QList<uint16_t>;
@@ -47,6 +48,12 @@ public:
 
     virtual QString getName() const = 0;
     virtual bool update() = 0;
+
+    /// Drivers that let the user fix device numbers and aliases per adapter
+    /// open their dialog here. Returns true if the assignment changed; it takes
+    /// effect the next time update() runs.
+    virtual bool canAssignAdapters() const { return false; }
+    virtual bool assignAdapters(QWidget *parent) { (void) parent; return false; }
 
     BusInterfaceIdList getInterfaceIds() const;
     QList<BusInterface*> getInterfaces() const;

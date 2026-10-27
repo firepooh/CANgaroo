@@ -52,6 +52,8 @@ struct CandleSharedDevice
     candle_handle handle{nullptr};
     QString productName{"Candle"};
     int deviceIndex{0};
+    QString serial;     // USB serial, empty if the adapter has none
+    QString alias;      // from the adapter table, shown next to the interface name
 
     // Open/close reference count — protected by openMutex.
     // The USB device is opened when the count reaches 1 and closed when it

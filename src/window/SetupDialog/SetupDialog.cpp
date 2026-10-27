@@ -60,6 +60,7 @@ SetupDialog::SetupDialog(Backend &backend, QWidget *parent) :
     _actionReloadCanDbs = new QAction("Reload", this);
     _actionIdentifyStart = new QAction(tr("Identify: blink LEDs"), this);
     _actionIdentifyStop = new QAction(tr("Identify: stop blinking"), this);
+    _actionAssignAdapters = new QAction(tr("Assign adapters..."), this);
 
     model = new SetupDialogTreeModel(_backend, this);
 
@@ -100,6 +101,7 @@ SetupDialog::SetupDialog(Backend &backend, QWidget *parent) :
     connect(_actionDeleteInterface, &QAction::triggered, this, &SetupDialog::executeDeleteInterface);
     connect(_actionIdentifyStart, &QAction::triggered, this, [this]() { executeIdentify(true); });
     connect(_actionIdentifyStop, &QAction::triggered, this, [this]() { executeIdentify(false); });
+    connect(_actionAssignAdapters, &QAction::triggered, this, &SetupDialog::executeAssignAdapters);
 
 
     emit backend.onSetupDialogCreated(*this);
@@ -235,6 +237,11 @@ void SetupDialog::treeViewContextMenu(const QPoint &pos)
                 contextMenu.addAction(_actionIdentifyStop);
                 _actionIdentifyStart->setEnabled(canIdentify);
                 _actionIdentifyStop->setEnabled(canIdentify);
+                // Fixed device numbers and aliases per adapter (Candle driver)
+                CanDriver *driver = item->intf ? _backend->getDriverById(item->intf->busInterface()) : nullptr;
+                if (driver && driver->canAssignAdapters()) {
+                    contextMenu.addAction(_actionAssignAdapters);
+                }
                 break;
             }
             case SetupDialogTreeItem::type_candb_root:
@@ -267,6 +274,27 @@ void SetupDialog::executeIdentify(bool on)
     if (!intf || !intf->identify(on)) {
         QMessageBox::warning(this, tr("Identify"),
                              tr("The adapter did not accept the identify request. See the log for details."));
+    }
+}
+
+void SetupDialog::executeAssignAdapters()
+{
+    SetupDialogTreeItem *item = getSelectedItem();
+    if (!item || item->getType() != SetupDialogTreeItem::type_interface || !item->intf) {
+        return;
+    }
+    CanDriver *driver = _backend->getDriverById(item->intf->busInterface());
+    if (!driver || !driver->assignAdapters(this)) {
+        return;
+    }
+
+    // The numbers take effect when the adapters are scanned again
+    const auto answer = QMessageBox::question(this, tr("Assign Adapters"),
+        tr("Scan the adapters again now?\n\n"
+           "Like Refresh, this rebuilds the networks with default settings. "
+           "Otherwise the new numbers apply the next time you press Refresh or start cangaroo."));
+    if (answer == QMessageBox::Yes) {
+        on_btRefreshNetworks_clicked();
     }
 }
 

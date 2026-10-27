@@ -259,6 +259,7 @@ QJsonObject RemoteApi::interfaceToJson(BusInterfaceId id)
         o["state"]        = stateName(intf->getState());
         o["capabilities"] = capabilityNames(intf->getCapabilities());
         o["details"]      = intf->getDetailsStr();
+        if (!intf->getAlias().isEmpty()) { o["alias"] = intf->getAlias(); }
 
         std::set<unsigned> bitrates, fdBitrates, samplePoints;
         for (CanTiming t : intf->getAvailableBitrates())

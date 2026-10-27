@@ -271,8 +271,15 @@ QString CandleApiInterface::getName() const
 QString CandleApiInterface::getDetailsStr() const
 {
     return _sharedDev->productName + " ch" + QString::number(_channel)
+           + (_sharedDev->serial.isEmpty() ? QString() : " | serial " + _sharedDev->serial)
+           + (_sharedDev->alias.isEmpty() ? QString() : " | alias " + _sharedDev->alias)
            + " | " + QString::fromStdWString(getPath())
            + (_isOpen ? (_elmue ? " | USB protocol ElmueSoft" : " | USB protocol legacy") : "");
+}
+
+QString CandleApiInterface::getAlias() const
+{
+    return _sharedDev->alias;
 }
 
 uint8_t CandleApiInterface::getChannel() const

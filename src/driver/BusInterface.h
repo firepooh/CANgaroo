@@ -190,6 +190,10 @@ public:
     /// adapter this interface is. Returns false if unsupported or the request failed.
     virtual bool identify(bool on) { (void) on; return false; }
 
+    /// User-given name of the adapter (e.g. from the Candle adapter table), shown
+    /// next to the interface name; empty if none.
+    virtual QString getAlias() const { return QString(); }
+
     virtual int getNumRxFrames() = 0;   ///< Total received frames since reset
     virtual int getNumRxErrors() = 0;   ///< Receive error count since reset
     virtual int getNumTxFrames() = 0;   ///< Total transmitted frames since reset

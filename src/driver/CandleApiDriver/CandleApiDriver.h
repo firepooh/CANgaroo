@@ -30,6 +30,9 @@
 #include <memory>
 #include <string>
 
+#include <QList>
+#include <QString>
+
 
 class GenericCanSetupPage;
 
@@ -40,6 +43,18 @@ public:
 
     QString getName() const override;
     bool update() override;
+
+    // Device numbers and aliases per USB serial (CandleAdapterTable)
+    bool canAssignAdapters() const override { return true; }
+    bool assignAdapters(QWidget *parent) override;
+
+    struct Adapter {
+        QString serial;
+        int number = 0;
+        QString alias;
+        QList<BusInterface *> interfaces;   // one per CAN channel
+    };
+    QList<Adapter> adapters() const;
 
 private:
     GenericCanSetupPage *setupPage;

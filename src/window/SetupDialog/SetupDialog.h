@@ -78,6 +78,7 @@ private slots:
     void executeAddInterface();
     void executeDeleteInterface();
     void executeIdentify(bool on);
+    void executeAssignAdapters();
 
     void on_btAddNetwork_clicked();
     void on_btRemoveNetwork_clicked();
@@ -96,6 +97,7 @@ private:
     QAction *_actionReloadCanDbs;
     QAction *_actionIdentifyStart;
     QAction *_actionIdentifyStop;
+    QAction *_actionAssignAdapters;
 
     SetupDialogTreeModel *model;
     MeasurementNetwork *_currentNetwork;

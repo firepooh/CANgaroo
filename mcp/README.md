@@ -87,7 +87,7 @@ HTTP로 띄울 수도 있다. 이때 주소는 `http://127.0.0.1:8765/mcp`이다
 | 도구 | 내용 |
 |---|---|
 | `status` | 서버 정보, 측정 상태, 현재 커서 |
-| `list_interfaces` | 인터페이스 목록, 지원 비트레이트, 현재 설정 |
+| `list_interfaces` | 인터페이스 목록, 지원 비트레이트, 현재 설정. Candle 어댑터는 `details`에 USB 시리얼, 별칭이 있으면 `alias` |
 | `configure_interface` | 비트레이트, 샘플 포인트(‰), CAN FD, listen-only 설정. 측정이 멈춘 상태에서만 바꿀 수 있다 |
 | `start_measurement` / `stop_measurement` | 측정 시작과 정지 |
 | `bus_status` | 버스 상태, 송수신·오류 카운터 |

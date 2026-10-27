@@ -23,6 +23,7 @@
 #include "SetupDialogTreeItem.h"
 #include <QModelIndex>
 #include "driver/CanDriver.h"
+#include "driver/BusInterface.h"
 #include "SetupDialogTreeModel.h"
 
 SetupDialogTreeItem::SetupDialogTreeItem(item_type type, Backend *backend, SetupDialogTreeItem *parent)
@@ -76,7 +77,13 @@ QVariant SetupDialogTreeItem::dataInterface(const QModelIndex &index) const
         case SetupDialogTreeModel::column_device:
             if (!intf->isResolved())
                 return QObject::tr("(unavailable) %1").arg(intf->savedInterfaceName());
-            return _backend->getInterfaceName(intf->busInterface());
+            {
+                // The alias tells which adapter this is (e.g. "candle0_ch0 (NO1)")
+                const BusInterface *bi = _backend->getInterfaceById(intf->busInterface());
+                const QString alias = bi ? bi->getAlias() : QString();
+                const QString name = _backend->getInterfaceName(intf->busInterface());
+                return alias.isEmpty() ? name : QStringLiteral("%1 (%2)").arg(name, alias);
+            }
         case SetupDialogTreeModel::column_driver:
             if (!intf->isResolved())
                 return intf->savedDriverName();

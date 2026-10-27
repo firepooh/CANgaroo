@@ -24,12 +24,19 @@
 #include "api/candle.h"
 
 #include "core/Log.h"
+#include "CandleAdapterDialog.h"
+#include "CandleAdapterTable.h"
 #include "CandleApiInterface.h"
 #include "driver/GenericCanSetupPage.h"
 
 #include <algorithm>
 #include <cwctype>
+#include <numeric>
+#include <vector>
 #include <QString>
+
+#include <windows.h>
+#include <cfgmgr32.h>
 
 // Composite USB devices expose each CAN interface as a separate Windows device
 // path containing "&mi_XX" (e.g. "&mi_00", "&mi_02"). Strip that segment so
@@ -95,6 +102,32 @@ static QString productNameFromPath(const std::wstring &path)
     return QStringLiteral("candle");
 }
 
+// USB serial of the adapter behind a Candlelight device path, empty if it has none.
+// "\\?\usb#vid_1d50&pid_606f&mi_00#7&1730e3ef&0&0000#{guid}" is the interface
+// USB\VID_1D50&PID_606F&MI_00\7&1730E3EF&0&0000 of a composite device; its parent
+// USB\VID_1D50&PID_606F\<serial> is named after the serial.
+static QString usbSerialFromPath(const std::wstring &path)
+{
+    std::wstring id = path;
+    if (id.rfind(L"\\\\?\\", 0) == 0) { id.erase(0, 4); }
+    const auto guid = id.rfind(L"#{");
+    if (guid != std::wstring::npos) { id.erase(guid); }
+    std::replace(id.begin(), id.end(), L'#', L'\\');
+
+    DEVINST inst = 0;
+    if (CM_Locate_DevNodeW(&inst, id.data(), CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS) { return QString(); }
+
+    std::wstring lower = id;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
+    if (lower.find(L"&mi_") != std::wstring::npos && CM_Get_Parent(&inst, inst, 0) != CR_SUCCESS) { return QString(); }
+
+    wchar_t buf[MAX_DEVICE_ID_LEN] = {};
+    if (CM_Get_Device_IDW(inst, buf, MAX_DEVICE_ID_LEN, 0) != CR_SUCCESS) { return QString(); }
+    const QString serial = QString::fromWCharArray(buf).section('\\', -1);
+    // Without a serial Windows makes up a location-based ID such as 5&2a3b4c&0&3
+    return serial.contains('&') ? QString() : serial;
+}
+
 CandleApiDriver::CandleApiDriver(Backend &backend)
   : CanDriver(backend),
     setupPage(new GenericCanSetupPage(0))
@@ -128,7 +161,17 @@ bool CandleApiDriver::update()
         return true;
     }
 
-    int deviceCounter = 0;
+    // All adapters are collected first; their device numbers (the N in
+    // candle<N>_ch<M>) come from the adapter table and the USB serials below.
+    struct FoundDevice {
+        candle_handle handle;
+        std::wstring path;
+        std::wstring baseKey;
+        uint8_t channels;
+        QString serial;
+    };
+    std::vector<FoundDevice> found;
+
     for (uint8_t i = 0; i < num_devices; i++) {
         candle_handle dev;
         if (!candle_dev_get(clist, i, &dev)) {
@@ -157,7 +200,7 @@ bool CandleApiDriver::update()
         // On composite devices each CAN channel has its own interface path
         // (MI_00, MI_02, …) but they all share the same USB endpoint and
         // the firmware reports the total icount from any interface.
-        if (_devices.count(baseKey)) {
+        if (std::any_of(found.begin(), found.end(), [&](const FoundDevice &f) { return f.baseKey == baseKey; })) {
             candle_dev_close(dev);
             candle_dev_free(dev);
             continue;
@@ -181,18 +224,70 @@ bool CandleApiDriver::update()
         candle_dev_close(dev);
         candle_dev_free(dev);
 
+        found.push_back({ shared_handle, devPath, baseKey, num_channels, usbSerialFromPath(devPath) });
+    }
+
+    // Fixed numbers from the adapter table, the rest in USB serial order, so the
+    // names do not depend on the order Windows lists the devices in
+    QString tableError;
+    const QList<CandleAdapterEntry> table = CandleAdapterTable::load(&tableError);
+    if (!tableError.isEmpty()) {
+        log_warning(QStringLiteral("CandleAPI: adapter table ignored: %1").arg(tableError));
+    }
+    QStringList serials;
+    for (const FoundDevice &f : found) {
+        serials.append(f.serial);
+    }
+    const QList<int> numbers = CandleAdapterTable::assignNumbers(serials, table);
+
+    std::vector<qsizetype> order(found.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](qsizetype a, qsizetype b) { return numbers[a] < numbers[b]; });
+
+    for (qsizetype idx : order) {
+        const FoundDevice &f = found[static_cast<size_t>(idx)];
         auto sharedDev = std::make_shared<CandleSharedDevice>();
-        sharedDev->handle = shared_handle;
-        sharedDev->productName = productNameFromPath(devPath);
-        sharedDev->deviceIndex = deviceCounter++;
-        _devices[baseKey] = sharedDev;
+        sharedDev->handle = f.handle;
+        sharedDev->productName = productNameFromPath(f.path);
+        sharedDev->deviceIndex = numbers[idx];
+        sharedDev->serial = f.serial;
+        if (const CandleAdapterEntry *e = CandleAdapterTable::find(table, f.serial)) {
+            sharedDev->alias = e->alias;
+        }
+        _devices[f.baseKey] = sharedDev;
 
         // One BusInterface per channel, all sharing the same physical device.
-        for (uint8_t ch = 0; ch < num_channels; ch++) {
+        for (uint8_t ch = 0; ch < f.channels; ch++) {
             addInterface(new CandleApiInterface(this, sharedDev, ch));
         }
     }
 
     candle_list_free(clist);
     return true;
+}
+
+bool CandleApiDriver::assignAdapters(QWidget *parent)
+{
+    CandleAdapterDialog dlg(*this, parent);
+    return dlg.exec() == QDialog::Accepted;
+}
+
+QList<CandleApiDriver::Adapter> CandleApiDriver::adapters() const
+{
+    QList<Adapter> result;
+    for (const auto &[key, dev] : _devices) {
+        Adapter a;
+        a.serial = dev->serial;
+        a.number = dev->deviceIndex;
+        a.alias = dev->alias;
+        for (BusInterface *intf : getInterfaces()) {
+            auto *candle = dynamic_cast<CandleApiInterface *>(intf);
+            if (candle && candle->sharesDevice(dev)) {
+                a.interfaces.append(intf);
+            }
+        }
+        result.append(a);
+    }
+    std::sort(result.begin(), result.end(), [](const Adapter &a, const Adapter &b) { return a.number < b.number; });
+    return result;
 }

@@ -49,6 +49,8 @@ public:
 
     QString getName() const override;
     QString getDetailsStr() const override;
+    QString getAlias() const override;
+    bool sharesDevice(const std::shared_ptr<CandleSharedDevice> &dev) const { return _sharedDev == dev; }
 
     void applyConfig(const MeasurementInterface &mi) override;
 
