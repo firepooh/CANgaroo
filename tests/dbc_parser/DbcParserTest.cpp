@@ -78,6 +78,7 @@ private slots:
 
     void unknownSectionsAreSkipped();
     void rejectsTruncatedSignal();
+    void parsesExponentNotation();
 };
 
 bool DbcParserTest::parse(const QString &body, CanDb &db, bool withPreamble)
@@ -376,6 +377,37 @@ void DbcParserTest::rejectsTruncatedSignal()
     QVERIFY(!parse(R"(BO_ 100 M: 8 ECU_A
  SG_ Sig : 0|8@1+
 )", db));
+}
+
+// Numbers in exponent notation, with a lowercase and an uppercase 'e'. The
+// lowercase form is what printf's %g writes (a generated XCP DAQ DBC carried
+// "[0|4.29497e+09]" and failed to load). Expected values from cantools 42.0.3
+// loading the same text: scale 1e-05 / 0.001, offset -2500.0 / 0,
+// minimum 0 / -150.0, maximum 4294970000.0 / 65000.0.
+void DbcParserTest::parsesExponentNotation()
+{
+    CanDb db;
+    QVERIFY(parse(R"(BO_ 2566890241 XCP_DAQ: 8 ECU_A
+ SG_ Lower : 0|32@1+ (1e-05,-2.5e+03) [0|4.29497e+09] "" ECU_B
+ SG_ Upper : 32|16@1- (1E-3,0) [-1.5e2|6.5E+04] "" ECU_B
+)", db));
+
+    CanDbMessage *msg = db.getMessageById(2566890241u);   // 0x18FFA301 with the extended marker
+    QVERIFY(msg != nullptr);
+
+    CanDbSignal *lower = msg->getSignalByName("Lower");
+    QVERIFY(lower != nullptr);
+    QCOMPARE(lower->getFactor(), 1e-05);
+    QCOMPARE(lower->getOffset(), -2500.0);
+    QCOMPARE(lower->getMinimumValue(), 0.0);
+    QCOMPARE(lower->getMaximumValue(), 4294970000.0);
+
+    CanDbSignal *upper = msg->getSignalByName("Upper");
+    QVERIFY(upper != nullptr);
+    QCOMPARE(upper->getFactor(), 0.001);
+    QCOMPARE(upper->getOffset(), 0.0);
+    QCOMPARE(upper->getMinimumValue(), -150.0);
+    QCOMPARE(upper->getMaximumValue(), 65000.0);
 }
 
 QTEST_APPLESS_MAIN(DbcParserTest)
