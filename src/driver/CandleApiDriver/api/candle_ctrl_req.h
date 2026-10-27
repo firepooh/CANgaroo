@@ -57,5 +57,6 @@ bool candle_ctrl_set_data_bittiming(candle_device_t *dev, uint8_t channel, candl
 bool candle_ctrl_get_timestamp(candle_device_t *dev, uint32_t *current_timestamp);
 bool candle_ctrl_set_tdc(candle_device_t *dev, uint8_t channel, candle_device_tdc_t *data);
 bool candle_ctrl_bus_off_recovery(candle_device_t *dev, uint8_t channel);
+bool candle_ctrl_identify(candle_device_t *dev, uint8_t channel, bool on);
 bool candle_ctrl_get_state(candle_device_t *dev, uint8_t channel, candle_device_state_t *data);
 

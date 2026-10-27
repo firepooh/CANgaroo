@@ -77,6 +77,7 @@ namespace
             { BusInterface::capability_custom_canfd_bitrate, "custom_canfd_bitrate" },
             { BusInterface::capability_bus_off_recovery,     "bus_off_recovery" },
             { BusInterface::capability_tdc,                  "tdc" },
+            { BusInterface::capability_identify,             "identify" },
         };
 
         QJsonArray result;
@@ -141,6 +142,7 @@ void RemoteApi::call(const QString &method, const QJsonObject &params, Reply rep
         { "stop_measurement",    &RemoteApi::stopMeasurement },
         { "measurement_status",  &RemoteApi::measurementStatus },
         { "bus_status",          &RemoteApi::busStatus },
+        { "identify",            &RemoteApi::identify },
         { "send_frame",          &RemoteApi::sendFrame },
         { "send_periodic",       &RemoteApi::sendPeriodic },
         { "stop_periodic",       &RemoteApi::stopPeriodic },
@@ -604,6 +606,26 @@ QJsonValue RemoteApi::measurementStatus(const QJsonObject &)
         intfs.append(i);
     }
     o["interfaces"] = intfs;
+    return o;
+}
+
+QJsonValue RemoteApi::identify(const QJsonObject &params)
+{
+    // Blinks the adapter LEDs; it does not touch the bus, so it needs no --remote-allow-tx
+    BusInterface &intf = requireInterface(params);
+    if (!(intf.getCapabilities() & BusInterface::capability_identify))
+    {
+        throw RemoteError(RemoteError::InvalidParams, "interface does not support identify");
+    }
+    const bool on = RemoteJson::toBool(params, "on", true);
+    if (!intf.identify(on))
+    {
+        throw RemoteError(RemoteError::IoError, "the adapter did not accept the identify request");
+    }
+
+    QJsonObject o;
+    o["interface"] = static_cast<int>(intf.getId());
+    o["on"]        = on;
     return o;
 }
 

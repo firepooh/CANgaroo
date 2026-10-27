@@ -78,6 +78,7 @@ public:
         capability_custom_canfd_bitrate = 0x080, ///< Arbitrary CAN FD data-phase bitrate
         capability_bus_off_recovery     = 0x800, ///< Host-triggered recovery, see recoverFromBusOff()
         capability_tdc                  = 0x1000, ///< Transmitter delay compensation for the CAN FD data phase
+        capability_identify             = 0x2000, ///< Blink the adapter LEDs to find it, see identify()
         // LIN capabilities
         capability_lin_master           = 0x100, ///< LIN master node (can send headers)
         capability_lin_slave            = 0x200, ///< LIN slave node
@@ -184,6 +185,10 @@ public:
     /// Ask the hardware to leave bus-off (only meaningful if the driver took over recovery).
     /// Returns false if unsupported or the request failed.
     virtual bool recoverFromBusOff() { return false; }
+
+    /// Blink the adapter's LEDs (true) or stop (false) so the user can tell which
+    /// adapter this interface is. Returns false if unsupported or the request failed.
+    virtual bool identify(bool on) { (void) on; return false; }
 
     virtual int getNumRxFrames() = 0;   ///< Total received frames since reset
     virtual int getNumRxErrors() = 0;   ///< Receive error count since reset

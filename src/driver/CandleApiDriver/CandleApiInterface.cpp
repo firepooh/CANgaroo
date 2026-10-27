@@ -326,6 +326,10 @@ uint32_t CandleApiInterface::getCapabilities()
             retval |= BusInterface::capability_tdc;
         }
 
+        if (caps.feature & CANDLE_FEATURE_IDENTIFY) {
+            retval |= BusInterface::capability_identify;
+        }
+
         return retval;
 
     } else {
@@ -910,6 +914,31 @@ bool CandleApiInterface::recoverFromBusOff()
         return false;
     }
     return true;
+}
+
+bool CandleApiInterface::identify(bool on)
+{
+    // Works with the measurement stopped too: the device is opened just for the
+    // request. The blinking goes on after the device is closed again, until it
+    // is stopped or the channel is started.
+    QMutexLocker devLock(&_sharedDev->openMutex);
+    const bool openHere = (_sharedDev->openCount == 0);
+    if (openHere && !candle_dev_open(_sharedDev->handle)) {
+        log_error(tr("CandleApi: %1: device open failed for identify (error %2)")
+            .arg(getName()).arg(candle_dev_last_error(_sharedDev->handle)));
+        return false;
+    }
+
+    const bool ok = candle_channel_identify(_sharedDev->handle, _channel, on);
+    if (!ok) {
+        log_error(tr("CandleApi: %1: identify request failed (error %2)")
+            .arg(getName()).arg(candle_dev_last_error(_sharedDev->handle)));
+    }
+
+    if (openHere) {
+        candle_dev_close(_sharedDev->handle);
+    }
+    return ok;
 }
 
 int CandleApiInterface::getNumRxFrames()

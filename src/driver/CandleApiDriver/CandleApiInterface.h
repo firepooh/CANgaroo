@@ -67,6 +67,7 @@ public:
     bool updateStatistics() override;
     uint32_t getState() override;
     bool recoverFromBusOff() override;
+    bool identify(bool on) override;
     int getNumRxFrames() override;
     int getNumRxErrors() override;
     int getNumTxFrames() override;

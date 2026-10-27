@@ -270,6 +270,7 @@ bool __stdcall DLL candle_channel_get_capabilities(candle_handle hdev, uint8_t c
 bool __stdcall DLL candle_channel_get_state(candle_handle hdev, uint8_t ch, candle_can_state_t *state);
 bool __stdcall DLL candle_channel_set_tdc_auto(candle_handle hdev, uint8_t ch);
 bool __stdcall DLL candle_channel_bus_off_recovery(candle_handle hdev, uint8_t ch);
+bool __stdcall DLL candle_channel_identify(candle_handle hdev, uint8_t ch, bool on);
 bool __stdcall DLL candle_channel_set_timing(candle_handle hdev, uint8_t ch, candle_bittiming_t *data);
 bool __stdcall DLL candle_channel_set_bitrate(candle_handle hdev, uint8_t ch, uint32_t bitrate);
 bool __stdcall DLL candle_channel_start(candle_handle hdev, uint8_t ch, uint32_t flags);

@@ -91,6 +91,7 @@ HTTP로 띄울 수도 있다. 이때 주소는 `http://127.0.0.1:8765/mcp`이다
 | `configure_interface` | 비트레이트, 샘플 포인트(‰), CAN FD, listen-only 설정. 측정이 멈춘 상태에서만 바꿀 수 있다 |
 | `start_measurement` / `stop_measurement` | 측정 시작과 정지 |
 | `bus_status` | 버스 상태, 송수신·오류 카운터 |
+| `identify` | 어댑터 LED를 깜박여(`on=true`) 어느 보드인지 찾는다. `on=false`로 멈춘다. 측정이 멈춘 상태에서도 되고, 채널을 시작하면 펌웨어가 깜박임을 끈다. 버스에 송신하지 않으므로 `--remote-allow-tx`가 필요 없다 |
 | `send_frame` | 프레임 1개 송신 |
 | `send_periodic` / `stop_periodic` | 주기 송신 |
 | `wait_for_frame` | 조건에 맞는 프레임이 올 때까지 대기 |

@@ -58,6 +58,8 @@ SetupDialog::SetupDialog(Backend &backend, QWidget *parent) :
     _actionDeleteCanDb = new QAction("Delete", this);
     _actionDeleteLinDb = new QAction("Delete", this);
     _actionReloadCanDbs = new QAction("Reload", this);
+    _actionIdentifyStart = new QAction(tr("Identify: blink LEDs"), this);
+    _actionIdentifyStop = new QAction(tr("Identify: stop blinking"), this);
 
     model = new SetupDialogTreeModel(_backend, this);
 
@@ -96,6 +98,8 @@ SetupDialog::SetupDialog(Backend &backend, QWidget *parent) :
 
     connect(_actionAddInterface, &QAction::triggered, this, &SetupDialog::executeAddInterface);
     connect(_actionDeleteInterface, &QAction::triggered, this, &SetupDialog::executeDeleteInterface);
+    connect(_actionIdentifyStart, &QAction::triggered, this, [this]() { executeIdentify(true); });
+    connect(_actionIdentifyStop, &QAction::triggered, this, [this]() { executeIdentify(false); });
 
 
     emit backend.onSetupDialogCreated(*this);
@@ -221,8 +225,18 @@ void SetupDialog::treeViewContextMenu(const QPoint &pos)
                 contextMenu.addAction(_actionAddInterface);
                 break;
             case SetupDialogTreeItem::type_interface:
+            {
                 contextMenu.addAction(_actionDeleteInterface);
+                // Blink the adapter LEDs to find which board this interface is
+                BusInterface *intf = item->intf ? _backend->getInterfaceById(item->intf->busInterface()) : nullptr;
+                const bool canIdentify = intf && (intf->getCapabilities() & BusInterface::capability_identify);
+                contextMenu.addSeparator();
+                contextMenu.addAction(_actionIdentifyStart);
+                contextMenu.addAction(_actionIdentifyStop);
+                _actionIdentifyStart->setEnabled(canIdentify);
+                _actionIdentifyStop->setEnabled(canIdentify);
                 break;
+            }
             case SetupDialogTreeItem::type_candb_root:
                 contextMenu.addAction(_actionAddCanDb);
                 break;
@@ -241,6 +255,19 @@ void SetupDialog::treeViewContextMenu(const QPoint &pos)
 
     QPoint globalPos = ui->treeView->mapToGlobal(pos);
     contextMenu.exec(globalPos);
+}
+
+void SetupDialog::executeIdentify(bool on)
+{
+    SetupDialogTreeItem *item = getSelectedItem();
+    if (!item || item->getType() != SetupDialogTreeItem::type_interface || !item->intf) {
+        return;
+    }
+    BusInterface *intf = _backend->getInterfaceById(item->intf->busInterface());
+    if (!intf || !intf->identify(on)) {
+        QMessageBox::warning(this, tr("Identify"),
+                             tr("The adapter did not accept the identify request. See the log for details."));
+    }
 }
 
 void SetupDialog::edNetworkNameChanged()

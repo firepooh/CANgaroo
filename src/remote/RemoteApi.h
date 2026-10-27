@@ -105,6 +105,7 @@ private:
     QJsonValue stopMeasurement(const QJsonObject &params);
     QJsonValue measurementStatus(const QJsonObject &params);
     QJsonValue busStatus(const QJsonObject &params);
+    QJsonValue identify(const QJsonObject &params);
     QJsonValue sendFrame(const QJsonObject &params);
     QJsonValue sendPeriodic(const QJsonObject &params);
     QJsonValue stopPeriodic(const QJsonObject &params);

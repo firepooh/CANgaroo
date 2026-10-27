@@ -802,6 +802,12 @@ bool __stdcall DLL candle_channel_bus_off_recovery(candle_handle hdev, uint8_t c
     return candle_ctrl_bus_off_recovery(dev, ch);
 }
 
+bool __stdcall DLL candle_channel_identify(candle_handle hdev, uint8_t ch, bool on)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+    return candle_ctrl_identify(dev, ch, on);
+}
+
 bool __stdcall DLL candle_channel_set_timing(candle_handle hdev, uint8_t ch, candle_bittiming_t *data)
 {
     // TODO ensure device is open, check channel count..

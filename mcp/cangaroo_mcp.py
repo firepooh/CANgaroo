@@ -186,6 +186,16 @@ async def bus_status(interface: int) -> dict:
 
 
 @mcp.tool()
+async def identify(interface: int, on: bool = True) -> dict:
+    """Blink the adapter's LEDs (on=true) or stop (on=false) to tell which board an interface is.
+
+    Works with the measurement stopped. The firmware also stops blinking when the channel starts.
+    Does not touch the bus, so it needs no --remote-allow-tx.
+    """
+    return await client.call("identify", interface=interface, on=on)
+
+
+@mcp.tool()
 async def send_frame(
     interface: int,
     id: CanId,

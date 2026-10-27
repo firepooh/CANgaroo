@@ -32,7 +32,8 @@ enum {
     CANDLE_BREQ_BT_CONST       = 4,
     CANDLE_BREQ_DEVICE_CONFIG  = 5,
     CANDLE_TIMESTAMP_GET       = 6,
-    /* 7: IDENTIFY, 8: GET_USER_ID, 9: SET_USER_ID (not used here) */
+    CANDLE_BREQ_IDENTIFY       = 7,
+    /* 8: GET_USER_ID, 9: SET_USER_ID (not used here) */
     CANDLE_BREQ_DATA_BITTIMING = 10,
     /* 11: BT_CONST_EXT, 12: SET_TERMINATION, 13: GET_TERMINATION (not used here);
      * numbering as in enum gs_usb_breq, Linux drivers/net/can/usb/gs_usb.c */
@@ -232,6 +233,25 @@ bool candle_ctrl_bus_off_recovery(candle_device_t *dev, uint8_t channel)
         dev->interfaceNumber,
         &data,
         sizeof(data)
+    );
+
+    dev->last_error = rc ? CANDLE_ERR_OK : CANDLE_ERR_SET_DEVICE_MODE;
+    return rc;
+}
+
+bool candle_ctrl_identify(candle_device_t *dev, uint8_t channel, bool on)
+{
+    /* 1 = blink the channel's LEDs, 0 = stop; firmware also stops when the channel starts */
+    uint32_t mode = on ? 1 : 0;
+
+    bool rc = usb_control_msg(
+        dev->winUSBHandle,
+        CANDLE_BREQ_IDENTIFY,
+        USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
+        channel,
+        dev->interfaceNumber,
+        &mode,
+        sizeof(mode)
     );
 
     dev->last_error = rc ? CANDLE_ERR_OK : CANDLE_ERR_SET_DEVICE_MODE;
