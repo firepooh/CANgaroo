@@ -62,6 +62,11 @@ public:
     virtual bool saveXML(Backend &backend, QDomDocument &xml, QDomElement &root);
     virtual bool loadXML(Backend &backend, QDomElement &el);
 
+    // Shows `page` (the Monitor window) on the first tab instead of the
+    // aggregated tree. The view / timestamp / filter toolbar then moves into
+    // the UDS / J1939 / XCP tabs, so all tabs sit in one row at the top.
+    void setMonitorPage(QWidget *page);
+
 protected:
     void retranslateUi() override;
 
@@ -83,8 +88,11 @@ private slots:
     void doScrollToBottom();
 
 private:
+    void placeToolbar(int tab);
+
     Ui::TraceWindow *ui;
     Backend *_backend;
+    QWidget *_monitorPage = nullptr;
     timestamp_mode_t _timestampMode;
     QTimer _scrollTimer;
     QTimer _filterDebounceTimer;

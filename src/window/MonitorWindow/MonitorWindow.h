@@ -22,11 +22,11 @@
 #include "core/ConfigurableWidget.h"
 
 class MonitorView;
-class QTabWidget;
 class TraceWindow;
 
-// Central widget of a trace tab: the message monitor plus the original
-// TraceWindow (with its UDS and J1939 views) as a second page.
+// Central widget of a trace tab: the original TraceWindow, whose first tab
+// (Monitor) shows the message monitor, followed by UDS Protocol, J1939 and XCP
+// in the same row, as in upstream cangaroo.
 //
 // The workspace keeps TraceWindow's format: TraceWindow writes its attributes
 // (type "TraceWindow") and the monitor adds a <MonitorView> child element.
@@ -45,7 +45,6 @@ protected:
     void retranslateUi() override;
 
 private:
-    QTabWidget *_tabs;
     MonitorView *_monitor;
     TraceWindow *_trace;
 };

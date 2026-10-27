@@ -30,6 +30,7 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSortFilterProxyModel>
+#include <QVBoxLayout>
 
 #include "core/Backend.h"
 #include "core/BusTrace.h"
@@ -239,9 +240,35 @@ void TraceWindow::setMode(TraceWindow::mode_t mode)
     tree->scrollToBottom();
 }
 
+void TraceWindow::setMonitorPage(QWidget *page)
+{
+    _monitorPage = page;
+    ui->treeAgg->hide();
+    ui->verticalLayout_2->setContentsMargins(0, 0, 0, 0);
+    ui->verticalLayout_2->addWidget(page);
+    ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
+    placeToolbar(ui->tabs->currentIndex());
+}
+
+void TraceWindow::placeToolbar(int tab)
+{
+    if (!_monitorPage) { return; }
+
+    // The Monitor page has its own toolbar; the other tabs get this one above their tree
+    if (tab == Cat_Aggregated) {
+        ui->widget->hide();
+        return;
+    }
+    auto *layout = qobject_cast<QVBoxLayout *>(ui->tabs->widget(tab)->layout());
+    if (layout && layout->indexOf(ui->widget) != 0) {
+        layout->insertWidget(0, ui->widget);
+    }
+    ui->widget->show();
+}
+
 void TraceWindow::on_tabs_currentChanged(int index)
 {
-    (void) index;
+    placeToolbar(index);
     int tabIdx = ui->tabs->currentIndex();
     mode_t currentMode = _tabModes[tabIdx];
     for (int i = 0; i < ui->cbViewMode->count(); i++) {

@@ -20,7 +20,6 @@
 #include "MonitorWindow.h"
 
 #include <QDomDocument>
-#include <QTabWidget>
 #include <QVBoxLayout>
 
 #include "window/TraceWindow/TraceWindow.h"
@@ -29,16 +28,13 @@
 MonitorWindow::MonitorWindow(QWidget *parent, Backend &backend)
     : ConfigurableWidget(parent)
 {
-    _tabs = new QTabWidget(this);
-    _tabs->setDocumentMode(true);
-    _monitor = new MonitorView(backend, _tabs);
-    _trace = new TraceWindow(_tabs, backend);
-    _tabs->addTab(_monitor, tr("Monitor"));
-    _tabs->addTab(_trace, tr("Trace / UDS / J1939"));
+    _trace = new TraceWindow(this, backend);
+    _monitor = new MonitorView(backend, _trace);
+    _trace->setMonitorPage(_monitor);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(_tabs);
+    layout->addWidget(_trace);
 
     connect(_monitor, &MonitorView::settingsChanged, this, [this]() { emit settingsChanged(this); });
     connect(_trace, &ConfigurableWidget::settingsChanged, this, [this]() { emit settingsChanged(this); });
@@ -48,8 +44,8 @@ bool MonitorWindow::saveXML(Backend &backend, QDomDocument &xml, QDomElement &ro
 {
     if (!_trace->saveXML(backend, xml, root)) { return false; }
 
+    // The active tab is TraceWindow's ActiveTab (0 = Monitor)
     QDomElement el = xml.createElement("MonitorView");
-    el.setAttribute("ActivePage", _tabs->currentIndex());
     _monitor->saveXML(xml, el);
     root.appendChild(el);
     return true;
@@ -61,14 +57,12 @@ bool MonitorWindow::loadXML(Backend &backend, QDomElement &el)
 
     const QDomElement monitorEl = el.firstChildElement("MonitorView");
     if (!monitorEl.isNull()) {
+        // Older workspaces also have ActivePage (the former outer page tabs); it is ignored
         _monitor->loadXML(monitorEl);
-        _tabs->setCurrentIndex(monitorEl.attribute("ActivePage", "0").toInt());
     }
     return true;
 }
 
 void MonitorWindow::retranslateUi()
 {
-    _tabs->setTabText(0, tr("Monitor"));
-    _tabs->setTabText(1, tr("Trace / UDS / J1939"));
 }
