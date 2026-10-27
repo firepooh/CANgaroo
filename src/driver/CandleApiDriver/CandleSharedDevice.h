@@ -54,6 +54,11 @@ struct CandleSharedDevice
     int deviceIndex{0};
     QString serial;     // USB serial, empty if the adapter has none
     QString alias;      // from the adapter table, shown next to the interface name
+    uint32_t swVersion{0};  // device config sw_version; Candlelight 2.5 reports its BCD build date (0x261027)
+
+    // Firmware version as text: "0x261027" for a BCD date, the plain number for
+    // legacy firmware (sw_version 2), empty if the device reported none
+    QString firmwareVersion() const;
 
     // Open/close reference count — protected by openMutex.
     // The USB device is opened when the count reaches 1 and closed when it

@@ -495,6 +495,7 @@ async def can_status() -> dict:
             "channel": by_id[i["id"]],
             "interface": i["id"],
             "name": i["name"],
+            "firmware": i.get("firmware_version"),
             "open": state.get(i["id"], {}).get("open", False),
             "state": state.get(i["id"], {}).get("state", i.get("state")),
             "bitrate": cfg.get("bitrate"),

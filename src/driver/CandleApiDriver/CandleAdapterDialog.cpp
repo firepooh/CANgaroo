@@ -37,7 +37,7 @@
 namespace
 {
 
-enum Column { col_number, col_alias, col_serial, col_now, col_identify, col_count };
+enum Column { col_number, col_alias, col_serial, col_firmware, col_now, col_identify, col_count };
 
 } // namespace
 
@@ -54,7 +54,7 @@ CandleAdapterDialog::CandleAdapterDialog(CandleApiDriver &driver, QWidget *paren
     help->setWordWrap(true);
 
     _table = new QTableWidget(0, col_count, this);
-    _table->setHorizontalHeaderLabels({ tr("Number"), tr("Alias"), tr("USB serial"), tr("Now"), QString() });
+    _table->setHorizontalHeaderLabels({ tr("Number"), tr("Alias"), tr("USB serial"), tr("Firmware"), tr("Now"), QString() });
     _table->verticalHeader()->hide();
     _table->setSelectionMode(QAbstractItemView::NoSelection);
     _table->horizontalHeader()->setSectionResizeMode(col_serial, QHeaderView::ResizeToContents);
@@ -143,6 +143,10 @@ void CandleAdapterDialog::addRow(const QString &serial, int number, const QStrin
     auto *serialItem = new QTableWidgetItem(serial.isEmpty() ? tr("(no serial)") : serial);
     serialItem->setFlags(Qt::ItemIsEnabled);
     _table->setItem(row, col_serial, serialItem);
+
+    auto *firmwareItem = new QTableWidgetItem(intf ? intf->getVersion() : QString());
+    firmwareItem->setFlags(Qt::ItemIsEnabled);
+    _table->setItem(row, col_firmware, firmwareItem);
 
     auto *nowItem = new QTableWidgetItem(now);
     nowItem->setFlags(Qt::ItemIsEnabled);

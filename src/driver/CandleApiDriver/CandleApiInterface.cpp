@@ -294,6 +294,7 @@ QString CandleApiInterface::getDetailsStr() const
     return _sharedDev->productName + " ch" + QString::number(_channel)
            + (_sharedDev->serial.isEmpty() ? QString() : " | serial " + _sharedDev->serial)
            + (_sharedDev->alias.isEmpty() ? QString() : " | alias " + _sharedDev->alias)
+           + (_sharedDev->firmwareVersion().isEmpty() ? QString() : " | FW " + _sharedDev->firmwareVersion())
            + " | " + QString::fromStdWString(getPath())
            + (_isOpen ? (_elmue ? " | USB protocol ElmueSoft" : " | USB protocol legacy") : "");
 }
@@ -1006,5 +1007,6 @@ std::wstring CandleApiInterface::getPath() const
 
 QString CandleApiInterface::getVersion()
 {
-    return "1.0";
+    const QString fw = _sharedDev->firmwareVersion();
+    return fw.isEmpty() ? BusInterface::getVersion() : fw;
 }

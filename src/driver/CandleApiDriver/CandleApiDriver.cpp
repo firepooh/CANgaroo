@@ -251,6 +251,7 @@ bool CandleApiDriver::update()
         sharedDev->productName = productNameFromPath(f.path);
         sharedDev->deviceIndex = numbers[idx];
         sharedDev->serial = f.serial;
+        sharedDev->swVersion = static_cast<candle_device_t*>(f.handle)->dconf.sw_version;
         if (const CandleAdapterEntry *e = CandleAdapterTable::find(table, f.serial)) {
             sharedDev->alias = e->alias;
         }

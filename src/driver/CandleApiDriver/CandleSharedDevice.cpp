@@ -37,6 +37,17 @@ CandleSharedDevice::~CandleSharedDevice()
     }
 }
 
+QString CandleSharedDevice::firmwareVersion() const
+{
+    if (swVersion == 0) {
+        return QString();
+    }
+    if (swVersion > 0xFFFF) {
+        return QStringLiteral("0x%1").arg(swVersion, 6, 16, QChar('0'));
+    }
+    return QString::number(swVersion);
+}
+
 void CandleSharedDevice::startReader()
 {
     readerRunning.store(true, std::memory_order_relaxed);
