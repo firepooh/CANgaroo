@@ -101,9 +101,10 @@ int main(int argc, char *argv[])
     const QCommandLineOption remoteOption("remote", "Enable the remote control endpoint on 127.0.0.1.");
     const QCommandLineOption remotePortOption("remote-port", "Remote control TCP <port> (default 52790, 0 = any).", "port", "52790");
     const QCommandLineOption remoteTokenOption("remote-token", "Remote control <token> (default: random, see the discovery file).", "token");
-    const QCommandLineOption remoteAllowTxOption("remote-allow-tx", "Allow remote clients to transmit frames.");
+    const QCommandLineOption remoteAllowTxOption("remote-allow-tx", "Allow remote clients to transmit frames (default: the MCP menu setting, which allows it).");
+    const QCommandLineOption remoteReadOnlyOption("remote-read-only", "Refuse transmitting from remote clients for this run.");
     const QCommandLineOption remoteBufferOption("remote-buffer", "Frames kept for remote clients (default 100000).", "frames", "100000");
-    parser.addOptions({ remoteOption, remotePortOption, remoteTokenOption, remoteAllowTxOption, remoteBufferOption });
+    parser.addOptions({ remoteOption, remotePortOption, remoteTokenOption, remoteAllowTxOption, remoteReadOnlyOption, remoteBufferOption });
 #endif
     parser.process(a);
 
@@ -124,7 +125,9 @@ int main(int argc, char *argv[])
 
 #ifdef REMOTE_CONTROL
     // Without --remote the MCP menu settings decide (enabled by default). With it,
-    // the command line decides this run, as before (test scripts rely on it).
+    // the command line sets the endpoint for this run; transmitting follows the
+    // MCP menu's AI Read-only setting unless --remote-allow-tx / --remote-read-only
+    // say otherwise.
     // The main window owns the controller and stops it before its drivers.
     McpController::CommandLine commandLine;
     commandLine.remote = parser.isSet(remoteOption) || parser.isSet(remotePortOption);
@@ -135,6 +138,7 @@ int main(int argc, char *argv[])
         options.token = parser.value(remoteTokenOption);
         if (options.token.isEmpty()) { options.token = qEnvironmentVariable("CANGAROO_REMOTE_TOKEN"); }
         options.allowTx = parser.isSet(remoteAllowTxOption);
+        commandLine.readOnly = parser.isSet(remoteReadOnlyOption);
         options.frameLogCapacity = std::max(1000, parser.value(remoteBufferOption).toInt());
     }
     w.mcp()->startup(commandLine);

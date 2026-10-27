@@ -59,7 +59,8 @@ dist\cangaroo.exe --remote --remote-allow-tx
 |---|---|
 | `--remote` | 127.0.0.1에서 원격 제어를 연다 |
 | `--remote-port <port>` | 포트 (기본 52790, 0이면 빈 포트 자동 선택) |
-| `--remote-allow-tx` | 원격 송신을 허용한다. 없으면 송신 도구는 모두 거부된다 |
+| `--remote-allow-tx` | 원격 송신을 허용한다. 없으면 MCP 메뉴의 AI Read-only 설정을 따른다(기본: 송신 허용) |
+| `--remote-read-only` | 이 실행에서는 원격 송신을 거부한다. 설정은 바꾸지 않는다 |
 | `--remote-token <token>` | 토큰을 직접 지정한다. 없으면 실행할 때마다 임의로 만든다 |
 | `--remote-buffer <frames>` | 원격 조회용으로 보관할 프레임 수 (기본 100000) |
 | `--workspace <file>` | 시작할 때 워크스페이스 파일을 연다 |
@@ -132,5 +133,5 @@ cangaroo를 그냥 실행하면 MCP 메뉴 기본값으로 같은 주소(`http:/
 - 타이밍은 `latency_us`, `period_*_ms` 값으로 판정한다. 도구 호출 한 번에 수백 ms가 걸리므로 호출 간격으로 판정하면 안 된다.
 - 모든 프레임에는 계속 증가하는 `seq`가 붙는다. 결과의 `next`나 `cursor`를 다음 호출의 `since`로 넘기면 빠짐없이 이어서 읽을 수 있다.
 - `dropped: true`는 버퍼 크기를 넘어 오래된 프레임이 지워졌다는 뜻이다.
-- 실제 버스에 송신하면 연결된 ECU가 동작할 수 있다. 송신이 필요 없으면 MCP → AI Read-only를 켠다. 명령줄로 띄울 때는 `--remote-allow-tx`를 필요할 때만 준다.
+- 실제 버스에 송신하면 연결된 ECU가 동작할 수 있다. 송신이 필요 없으면 MCP → AI Read-only를 켠다. 명령줄로 띄울 때 송신을 막으려면 `--remote-read-only`를 준다.
 - 측정을 시작하면 어댑터가 버스에 ACK를 보낸다. 버스에 영향을 주지 않으려면 `listen_only=true`로 설정한다.

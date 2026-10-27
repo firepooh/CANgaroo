@@ -110,8 +110,11 @@ void McpController::startup(const CommandLine &commandLine)
     if (_commandLine.remote)
     {
         // The command line decides this run; nothing is written to the settings.
+        // Transmitting keeps the AI Read-only setting (default: allowed) unless
+        // the command line says so explicitly.
         _enabled = true;
-        _readOnly = !_commandLine.options.allowTx;
+        if (_commandLine.readOnly) { _readOnly = true; }
+        else if (_commandLine.options.allowTx) { _readOnly = false; }
     }
     if (_enabled)
     {

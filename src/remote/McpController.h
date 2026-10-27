@@ -44,7 +44,8 @@ class QTimer;
 //
 // The --remote* command line options still work. They decide the endpoint
 // options for that run and leave the HTTP server to whoever started cangaroo
-// (test scripts, mcp/start_canterminal_compat.cmd).
+// (test scripts, mcp/start_canterminal_compat.cmd). Transmitting follows the
+// readOnly setting unless --remote-allow-tx or --remote-read-only is given.
 class McpController : public QObject
 {
     Q_OBJECT
@@ -63,6 +64,7 @@ public:
     struct CommandLine
     {
         bool remote = false;            // --remote or --remote-port given
+        bool readOnly = false;          // --remote-read-only given
         RemoteServer::Options options;  // from --remote-port / -token / -allow-tx / -buffer
     };
 
