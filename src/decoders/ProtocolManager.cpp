@@ -1,12 +1,14 @@
 #include "ProtocolManager.h"
 #include "UdsDecoder.h"
 #include "J1939Decoder.h"
+#include "ObdDecoder.h"
 #include "XcpDecoder.h"
 #include "XcpSessions.h"
 
 ProtocolManager::ProtocolManager() {
     m_udsDecoder = std::make_shared<UdsDecoder>();
     m_j1939Decoder = std::make_shared<J1939Decoder>();
+    m_obdDecoder = std::make_shared<ObdDecoder>();
 }
 
 ProtocolManager::~ProtocolManager() = default;
@@ -74,6 +76,16 @@ DecodeStatus ProtocolManager::processFrame(const BusMessage& frame, ProtocolMess
         return status;
     }
 
+    // OBD-II (services 0x01..0x0A) on the legislated OBD IDs before UDS, which
+    // shares those IDs; the OBD decoder leaves every other payload to UDS
+    status = m_obdDecoder->tryDecode(frame, outMsg);
+    if (status != DecodeStatus::Ignored) {
+        if (status == DecodeStatus::Completed) {
+            outMsg.globalIndex = ++m_msgCounter;
+        }
+        return status;
+    }
+
     if (frame.isExtended()) {
         // 29-bit ID: Try J1939 first
         status = m_j1939Decoder->tryDecode(frame, outMsg);
@@ -98,6 +110,7 @@ void ProtocolManager::reset() {
     m_msgCounter = 0;
     m_udsDecoder->reset();
     m_j1939Decoder->reset();
+    m_obdDecoder->reset();
     for (auto &xcp : m_xcpDecoders) {
         xcp->reset();
     }

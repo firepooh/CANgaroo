@@ -82,10 +82,11 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
         UnifiedTraceViewModel::Cat_All,
         UnifiedTraceViewModel::Cat_UDS,
         UnifiedTraceViewModel::Cat_J1939,
-        UnifiedTraceViewModel::Cat_XCP
+        UnifiedTraceViewModel::Cat_XCP,
+        UnifiedTraceViewModel::Cat_OBD
     };
 
-    QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp };
+    QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp, ui->treeObd };
 
     for (int i = 0; i < Cat_Count; ++i) {
         _viewModels[i] = new UnifiedTraceViewModel(backend, cats[i]);
@@ -105,10 +106,14 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
     const int ch = ui->treeXcp->fontMetrics().averageCharWidth();
     ui->treeUds->setColumnHidden(BaseTraceViewModel::column_type, true);
     ui->treeXcp->setColumnHidden(BaseTraceViewModel::column_type, true);
+    ui->treeObd->setColumnHidden(BaseTraceViewModel::column_type, true);
     ui->treeUds->setColumnWidth(BaseTraceViewModel::column_canid, 16 * ch);
     ui->treeJ1939->setColumnWidth(BaseTraceViewModel::column_canid, 22 * ch);
     // XCP packet names such as "DAQ-DTO (DAQ #12|ODT #3)" need more room than message names
     ui->treeXcp->setColumnWidth(BaseTraceViewModel::column_name, 34 * ch);
+    // OBD2: the ID column also shows service and PID ("0x7E8 (41 0C)"), the name is the PID's
+    ui->treeObd->setColumnWidth(BaseTraceViewModel::column_canid, 22 * ch);
+    ui->treeObd->setColumnWidth(BaseTraceViewModel::column_name, 34 * ch);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [trees](ThemeManager::Theme) {
         for (QTreeView *tree : trees) { MonitorStyleDelegate::applyPalette(tree); }
     });
@@ -120,6 +125,7 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
     _tabModes[Cat_UDS]        = mode_unified;
     _tabModes[Cat_J1939]      = mode_aggregated;
     _tabModes[Cat_XCP]        = mode_aggregated;
+    _tabModes[Cat_OBD]        = mode_aggregated;
 
     // Alt models: UDS aggregated, J1939 rolling (monitor tab has no alt model here)
     _altViewModels[Cat_Aggregated] = nullptr;
@@ -138,6 +144,7 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
     makeAltModel(Cat_UDS,    UnifiedTraceViewModel::Cat_UDS,    true);   // UDS aggregated
     makeAltModel(Cat_J1939,  UnifiedTraceViewModel::Cat_J1939,  false);  // J1939 rolling
     makeAltModel(Cat_XCP,    UnifiedTraceViewModel::Cat_XCP,    false);  // XCP rolling (command sequence)
+    makeAltModel(Cat_OBD,    UnifiedTraceViewModel::Cat_OBD,    false);  // OBD2 rolling (request / response order)
 
     connect(ui->xcpSessionsButton, &QPushButton::clicked, this, &TraceWindow::openXcpSessions);
     connect(&XcpSessions::instance(), &XcpSessions::changed, this, &TraceWindow::updateXcpStatus);
@@ -201,7 +208,7 @@ void TraceWindow::setMode(TraceWindow::mode_t mode)
     int tabIdx = ui->tabs->currentIndex();
     _tabModes[tabIdx] = mode;
 
-    QTreeView *trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp };
+    QTreeView *trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp, ui->treeObd };
     QTreeView *tree = trees[tabIdx];
 
     if (tabIdx == Cat_Aggregated) {
@@ -220,7 +227,7 @@ void TraceWindow::setMode(TraceWindow::mode_t mode)
         // UDS and J1939: primary model = the original (rolling for UDS, aggregated for J1939)
         // alt model = the new alternative (aggregated for UDS, rolling for J1939)
         bool usePrimary = (tabIdx == Cat_UDS)   ? (mode == mode_unified)
-                        : (tabIdx == Cat_J1939 || tabIdx == Cat_XCP) ? (mode == mode_aggregated)
+                        : (tabIdx == Cat_J1939 || tabIdx == Cat_XCP || tabIdx == Cat_OBD) ? (mode == mode_aggregated)
                         : true;
         if (usePrimary) {
             tree->setSortingEnabled(false);
@@ -233,7 +240,7 @@ void TraceWindow::setMode(TraceWindow::mode_t mode)
             tree->sortByColumn(BaseTraceViewModel::column_canid, Qt::AscendingOrder);
             tree->setModel(_altFilterModels[tabIdx]);
         } else {
-            // The J1939 / XCP alternative is the rolling log: keep the arrival order
+            // The J1939 / XCP / OBD2 alternative is the rolling log: keep the arrival order
             tree->setSortingEnabled(false);
             tree->header()->setSortIndicator(-1, Qt::AscendingOrder);
             _altFilterModels[tabIdx]->sort(-1);
@@ -258,7 +265,7 @@ void TraceWindow::setMonitorPage(QWidget *page)
     ui->verticalLayout_2->addWidget(page);
     ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
     // The protocol tabs get the same frame as the Monitor tab: tree flush with the tab
-    for (QVBoxLayout *page : { ui->verticalLayout_3, ui->verticalLayout_4, ui->verticalLayout_xcp }) {
+    for (QVBoxLayout *page : { ui->verticalLayout_3, ui->verticalLayout_4, ui->verticalLayout_xcp, ui->verticalLayout_obd }) {
         page->setContentsMargins(0, 0, 0, 0);
         page->setSpacing(0);
     }
@@ -458,6 +465,7 @@ bool TraceWindow::saveXML(Backend &backend, QDomDocument &xml, QDomElement &root
     root.setAttribute("modeUds", _tabModes[Cat_UDS] == mode_aggregated ? "aggregated" : "unified");
     root.setAttribute("modeJ1939", _tabModes[Cat_J1939] == mode_unified ? "unified" : "aggregated");
     root.setAttribute("modeXcp", _tabModes[Cat_XCP] == mode_unified ? "unified" : "aggregated");
+    root.setAttribute("modeObd", _tabModes[Cat_OBD] == mode_unified ? "unified" : "aggregated");
     root.setAttribute("TimestampMode", _timestampMode);
     root.setAttribute("ActiveTab", ui->tabs->currentIndex());
 
@@ -589,6 +597,7 @@ bool TraceWindow::loadXML(Backend &backend, QDomElement &el)
     _tabModes[Cat_UDS]  = (el.attribute("modeUds",   "unified")    == "aggregated") ? mode_aggregated : mode_unified;
     _tabModes[Cat_J1939]= (el.attribute("modeJ1939", "aggregated") == "unified")    ? mode_unified    : mode_aggregated;
     _tabModes[Cat_XCP]  = (el.attribute("modeXcp",   "aggregated") == "unified")    ? mode_unified    : mode_aggregated;
+    _tabModes[Cat_OBD]  = (el.attribute("modeObd",   "aggregated") == "unified")    ? mode_unified    : mode_aggregated;
     // Apply mode for Monitor tab (the tab that is currently visible after loading)
     setMode(_tabModes[ui->tabs->currentIndex()]);
     setTimestampMode(el.attribute("TimestampMode", "0").toInt());
@@ -676,7 +685,7 @@ void TraceWindow::onRowsInserted(const QModelIndex &parent, int first, int last)
 
 void TraceWindow::doScrollToBottom()
 {
-    QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp };
+    QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp, ui->treeObd };
     for (int i = 0; i < Cat_Count; ++i) {
         if (_scrollPending[i]) {
             trees[i]->scrollToBottom();

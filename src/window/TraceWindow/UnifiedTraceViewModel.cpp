@@ -18,7 +18,8 @@ void UnifiedTraceViewModel::applyProtocolConfig()
 }
 
 UnifiedTraceViewModel::UnifiedTraceViewModel(Backend &backend, Category category)
-    : BaseTraceViewModel(backend), m_category(category), m_aggregating(category == Cat_J1939 || category == Cat_XCP)
+    : BaseTraceViewModel(backend), m_category(category),
+      m_aggregating(category == Cat_J1939 || category == Cat_XCP || category == Cat_OBD)
 {
     applyProtocolConfig();
     m_rootItem = std::make_shared<UnifiedTraceItem>(BusMessage()); // Dummy root
@@ -278,6 +279,20 @@ void UnifiedTraceViewModel::processNewMessages()
                 } else {
                     shouldAppend = true;
                 }
+            } else if (pmsg.protocol.compare("obd2", Qt::CaseInsensitive) == 0 && m_category == Cat_OBD) {
+                // Aggregated: one row per CAN ID, service and PID, i.e. the latest value of each PID per ECU
+                if (m_aggregating) {
+                    uint64_t key = getObdKey(pmsg);
+                    if (m_obdAggregatedMap.count(key)) {
+                        auto &item = m_obdAggregatedMap[key];
+                        updateAggregatedItem(*item, pmsg);
+                        updatedRows.insert(item->row());
+                    } else {
+                        shouldAppend = true;
+                    }
+                } else {
+                    shouldAppend = true;
+                }
             }
 
             if (shouldAppend) {
@@ -298,6 +313,8 @@ void UnifiedTraceViewModel::processNewMessages()
                     m_udsAggregatedMap[getUdsKey(pmsg)] = item;
                 } else if (m_category == Cat_XCP && m_aggregating) {
                     m_xcpAggregatedMap[getXcpKey(pmsg)] = item;
+                } else if (m_category == Cat_OBD && m_aggregating) {
+                    m_obdAggregatedMap[getObdKey(pmsg)] = item;
                 }
             }
         }
@@ -400,6 +417,14 @@ void UnifiedTraceViewModel::processNewMessages()
                         m_xcpAggregatedMap[getXcpKey(child->protocolMessage())] = child;
                     }
                 }
+            } else if (m_category == Cat_OBD && m_aggregating) {
+                m_obdAggregatedMap.clear();
+                for (int i = 0; i < m_rootItem->childCount(); ++i) {
+                    auto child = m_rootItem->child(i);
+                    if (child && child->isProtocol() && child->protocolMessage().protocol.compare("obd2", Qt::CaseInsensitive) == 0) {
+                        m_obdAggregatedMap[getObdKey(child->protocolMessage())] = child;
+                    }
+                }
             }
         }
     }
@@ -441,6 +466,7 @@ void UnifiedTraceViewModel::afterClear()
     m_j1939AggregatedMap.clear();
     m_udsAggregatedMap.clear();
     m_xcpAggregatedMap.clear();
+    m_obdAggregatedMap.clear();
     m_prevTimestampByKey.clear();
     m_prevMessageByKey.clear();
     endResetModel();
@@ -460,6 +486,7 @@ void UnifiedTraceViewModel::onSetupChanged()
     m_j1939AggregatedMap.clear();
     m_udsAggregatedMap.clear();
     m_xcpAggregatedMap.clear();
+    m_obdAggregatedMap.clear();
     m_prevTimestampByKey.clear();
     m_prevMessageByKey.clear();
 
@@ -532,6 +559,16 @@ QVariant UnifiedTraceViewModel::data_DisplayRole(const QModelIndex &index, [[may
                 QString rawStr = QString("0x%1").arg(rawId, 0, 16).toUpper();
                 if (pmsg.protocol.compare("uds", Qt::CaseInsensitive) == 0) return QString("%1 (SID:%2)").arg(rawStr).arg(pmsg.id, 2, 16, QChar('0')).toUpper();
                 if (pmsg.protocol.compare("j1939", Qt::CaseInsensitive) == 0) return QString("%1 (PGN:%2)").arg(rawStr).arg(pmsg.id, 0, 16).toUpper();
+                if (pmsg.protocol.compare("obd2", Qt::CaseInsensitive) == 0 && !pmsg.payload.isEmpty()) {
+                    // The bytes that pick the row: service (0x41 for a response) and the PID if there is one
+                    const uint8_t sid = static_cast<uint8_t>(pmsg.payload.at(0));
+                    const uint32_t service = pmsg.id >> 8;
+                    const bool hasPid = pmsg.payload.size() > 1
+                        && (service == 0x01 || service == 0x02 || service == 0x06 || service == 0x08 || service == 0x09);
+                    QString key = QString("%1").arg(sid, 2, 16, QChar('0'));
+                    if (sid == 0x7F || hasPid) key += QString(" %1").arg(static_cast<uint8_t>(pmsg.payload.at(1)), 2, 16, QChar('0'));
+                    return QString("%1 (%2)").arg(rawStr, key.toUpper());
+                }
                 return rawStr;
             }
             case column_type:
@@ -548,7 +585,8 @@ QVariant UnifiedTraceViewModel::data_DisplayRole(const QModelIndex &index, [[may
             case column_direction: return pmsg.rawFrames.isEmpty() ? "" : (pmsg.rawFrames.first().isRX() ? tr("RX") : tr("TX"));
             case column_channel: return pmsg.rawFrames.isEmpty() ? "" : interfaceName(pmsg.rawFrames.first().getInterfaceId());
             case column_sender:
-                if (pmsg.protocol.compare("uds", Qt::CaseInsensitive) == 0) {
+                if (pmsg.protocol.compare("uds", Qt::CaseInsensitive) == 0
+                    || pmsg.protocol.compare("obd2", Qt::CaseInsensitive) == 0) {
                     return (pmsg.type == MessageType::Request) ? tr("Tester") : tr("ECU");
                 }
                 if (pmsg.protocol.compare("xcp", Qt::CaseInsensitive) == 0) {

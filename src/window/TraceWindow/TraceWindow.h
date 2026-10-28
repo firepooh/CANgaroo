@@ -104,12 +104,13 @@ private:
         Cat_UDS = 1,
         Cat_J1939 = 2,
         Cat_XCP = 3,
-        Cat_Count = 4
+        Cat_OBD = 4,
+        Cat_Count = 5
     };
 
     bool _scrollPending[Cat_Count] = {};
 
-    // Pause per tab (UDS / J1939 / XCP), like the Monitor tab's Pause
+    // Pause per tab (UDS / J1939 / XCP / OBD2), like the Monitor tab's Pause
     bool _paused[Cat_Count] = {};
     QToolButton *_pauseButton = nullptr;
     QLabel *_pauseLabel = nullptr;

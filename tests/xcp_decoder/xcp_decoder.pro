@@ -10,6 +10,7 @@ SOURCES += \
     $$SRC_DIR/decoders/XcpSessions.cpp \
     $$SRC_DIR/decoders/UdsDecoder.cpp \
     $$SRC_DIR/decoders/J1939Decoder.cpp \
+    $$SRC_DIR/decoders/ObdDecoder.cpp \
     $$SRC_DIR/decoders/ProtocolManager.cpp
 
 # XcpSessions is a QObject

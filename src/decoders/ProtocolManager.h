@@ -29,6 +29,7 @@ public:
 private:
     std::shared_ptr<IDecoder> m_udsDecoder;
     std::shared_ptr<IDecoder> m_j1939Decoder;
+    std::shared_ptr<IDecoder> m_obdDecoder;
     // One per configured XCP session (XcpSessions); rebuilt when the sessions change
     std::vector<std::unique_ptr<XcpDecoder>> m_xcpDecoders;
     int m_xcpRevision = -1;

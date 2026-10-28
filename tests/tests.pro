@@ -19,6 +19,7 @@ SUBDIRS += \
     slcan_codec \
     candle_error_frame \
     xcp_decoder \
+    obd_decoder \
     remote_frame_log \
     candle_adapters \
     candle_timing \

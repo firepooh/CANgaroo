@@ -49,6 +49,7 @@ shared config; `tests/support/LogStub.cpp` satisfies `core/Log` without `Backend
 | `slcan_codec/`        | SLCAN ASCII frame decoding, incl. malformed input |
 | `candle_error_frame/` | gs_usb / Candlelight 2.5 error frames to `BusError` flags, legacy and ElmueSoft (from `linux/can/error.h` + Elmue firmware) |
 | `xcp_decoder/`        | XCP on CAN: CTO commands/responses, byte order from CONNECT, DAQ/ODT from ALLOC_DAQ/ALLOC_ODT and DAQ_KEY_BYTE, XCP before UDS in `ProtocolManager` (packet layouts from ASAM MCD-1 XCP Part 2); A2L `XCP_ON_CAN` IDs (ASAM MCD-2 MC syntax) |
+| `obd_decoder/`        | OBD-II on CAN: SAE J1979 service 01/02 PID values, DTCs, VIN over ISO-TP, OBD IDs vs UDS on the same IDs (values worked out from the J1979 formulas) |
 | `remote_frame_log/`   | Remote frame ring buffer: sequence numbers across evictions, `read` from a cursor, newest-N `readLatest` with filters (remote API contract) |
 | `candle_adapters/`    | Candle adapter table: device numbers per USB serial (table first, then serial order, reserved numbers kept), 16-digit chip-ID key, JSON save/load |
 | `candle_timing/`      | Computed 160 MHz nominal timings (75/80/85/87.5 % for 10k..1M): exact sample point, bitrate within 1 bit/s, FDCAN NBTP limits, BRP 2 first, existing table rows kept |
@@ -153,7 +154,7 @@ src/
                      model/ (CanDb*/Lin* object graph), dbc/ (DBC parser),
                      ldf/ (LIN Description File parser, header-only)
   driver/        — BusInterface, BusListener, CanDriver + per-driver subdirectories
-  decoders/      — protocol decoders (UDS, J1939, XCP on CAN; XCP IDs per interface in XcpSessions)
+  decoders/      — protocol decoders (UDS, J1939, XCP on CAN, OBD-II; XCP IDs per interface in XcpSessions)
   window/        — UI windows, one self-contained directory + .pri each
                    (TraceWindow, SetupDialog, TxGeneratorWindow, ReplayWindow,
                    GatewayWindow, LinControlWindow, SettingsDialog, ...);

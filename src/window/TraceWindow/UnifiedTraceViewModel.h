@@ -17,7 +17,8 @@ public:
         Cat_All,
         Cat_UDS,
         Cat_J1939,
-        Cat_XCP
+        Cat_XCP,
+        Cat_OBD
     };
 
     UnifiedTraceViewModel(Backend &backend, Category category = Cat_All);
@@ -36,7 +37,7 @@ public:
 
     virtual QVariant data(const QModelIndex &index, int role) const override;
 
-    // Pause (UDS / J1939 / XCP tabs): stop taking new frames from the trace. The
+    // Pause (UDS / J1939 / XCP / OBD2 tabs): stop taking new frames from the trace. The
     // trace keeps recording; resuming processes everything recorded meanwhile in
     // one go. Rebuilds (setup or XCP session change, clear) still run while paused.
     void setPaused(bool paused);
@@ -77,9 +78,12 @@ private:
     std::map<uint64_t, std::shared_ptr<UnifiedTraceItem>> m_j1939AggregatedMap;
     std::map<uint64_t, std::shared_ptr<UnifiedTraceItem>> m_udsAggregatedMap;
     std::map<uint64_t, std::shared_ptr<UnifiedTraceItem>> m_xcpAggregatedMap;
+    std::map<uint64_t, std::shared_ptr<UnifiedTraceItem>> m_obdAggregatedMap;
     uint64_t getJ1939Key(const ProtocolMessage& pmsg) const;
     uint64_t getUdsKey(const ProtocolMessage& pmsg) const;
     uint64_t getXcpKey(const ProtocolMessage& pmsg) const;
+    // OBD2: interface, CAN ID, service and PID (ObdDecoder puts both in the message id)
+    uint64_t getObdKey(const ProtocolMessage& pmsg) const { return getUdsKey(pmsg); }
 
     QHash<uint64_t, uint64_t>   m_prevTimestampByKey;
     QHash<uint64_t, BusMessage> m_prevMessageByKey;
