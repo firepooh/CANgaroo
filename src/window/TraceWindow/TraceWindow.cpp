@@ -663,10 +663,13 @@ void TraceWindow::onRowsInserted(const QModelIndex &parent, int first, int last)
 
     TraceFilterModel *filterModel = qobject_cast<TraceFilterModel*>(sender());
 
+    // Only the model a tab shows scrolls it. Each tab keeps its other view mode
+    // (rolling or aggregated) up to date too, and rows arriving there must not pull
+    // the shown view to the bottom: a rolling log behind an aggregated view gets a
+    // row per frame, which made the aggregated view impossible to scroll.
+    QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp, ui->treeObd };
     for (int i = 0; i < Cat_Count; ++i) {
-        if (_filterModels[i] == filterModel
-            || (i == 0 && _aggMonitorFilterModel == filterModel)
-            || (_altFilterModels[i] && _altFilterModels[i] == filterModel))
+        if (filterModel && trees[i]->model() == filterModel)
         {
             _scrollPending[i] = true;
             break;
