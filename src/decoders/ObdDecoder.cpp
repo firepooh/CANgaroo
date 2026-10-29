@@ -63,6 +63,12 @@ QString hex(const QByteArray &data)
     return QString::fromLatin1(data.toHex(' ')).toUpper();
 }
 
+// Two upper-case hex digits; the "0x" prefix stays lower case
+QString hexByte(uint32_t v)
+{
+    return QString::number(v & 0xFFu, 16).rightJustified(2, QChar('0')).toUpper();
+}
+
 // Up to 'decimals' places without trailing zeros: 1726, 1726.25, 0.45
 QString num(double value, int decimals = 2)
 {
@@ -100,7 +106,7 @@ QString fuelSystemStatus(uint8_t v)
         case 0x04: return QStringLiteral("open loop, engine load or fuel cut");
         case 0x08: return QStringLiteral("open loop, system failure");
         case 0x10: return QStringLiteral("closed loop, feedback fault");
-        default:   return QStringLiteral("0x%1").arg(v, 2, 16, QChar('0'));
+        default:   return QStringLiteral("0x%1").arg(hexByte(v));
     }
 }
 
@@ -111,7 +117,7 @@ QString secondaryAirStatus(uint8_t v)
         case 0x02: return QStringLiteral("downstream of catalytic converter");
         case 0x04: return QStringLiteral("from outside atmosphere or off");
         case 0x08: return QStringLiteral("pump on for diagnostics");
-        default:   return QStringLiteral("0x%1").arg(v, 2, 16, QChar('0'));
+        default:   return QStringLiteral("0x%1").arg(hexByte(v));
     }
 }
 
@@ -175,7 +181,7 @@ QString nrcText(uint8_t nrc)
         case 0x22: return QStringLiteral("Conditions Not Correct");
         case 0x31: return QStringLiteral("Request Out Of Range");
         case 0x78: return QStringLiteral("Request Correctly Received - Response Pending");
-        default:   return QStringLiteral("unknown (0x%1)").arg(nrc, 2, 16, QChar('0'));
+        default:   return QStringLiteral("unknown (0x%1)").arg(hexByte(nrc));
     }
 }
 
@@ -474,7 +480,7 @@ QString ObdDecoder::serviceName(uint8_t service)
         case 0x08: return QStringLiteral("Control of on-board system");
         case 0x09: return QStringLiteral("Vehicle information");
         case 0x0A: return QStringLiteral("Permanent DTCs");
-        default:   return QStringLiteral("Service 0x%1").arg(service, 2, 16, QChar('0'));
+        default:   return QStringLiteral("Service 0x%1").arg(hexByte(service));
     }
 }
 

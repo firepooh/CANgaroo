@@ -558,7 +558,7 @@ QVariant UnifiedTraceViewModel::data_DisplayRole(const QModelIndex &index, [[may
                 uint32_t rawId = pmsg.rawFrames.isEmpty() ? 0 : pmsg.rawFrames.first().getId();
                 QString rawStr = QString("0x%1").arg(rawId, 0, 16).toUpper();
                 if (pmsg.protocol.compare("uds", Qt::CaseInsensitive) == 0) return QString("%1 (SID:%2)").arg(rawStr).arg(pmsg.id, 2, 16, QChar('0')).toUpper();
-                if (pmsg.protocol.compare("j1939", Qt::CaseInsensitive) == 0) return QString("%1 (PGN:%2)").arg(rawStr).arg(pmsg.id, 0, 16).toUpper();
+                if (pmsg.protocol.compare("j1939", Qt::CaseInsensitive) == 0) return QString("%1 (PGN:%2)").arg(rawStr).arg(pmsg.id, 4, 16, QChar('0')).toUpper();
                 if (pmsg.protocol.compare("obd2", Qt::CaseInsensitive) == 0 && !pmsg.payload.isEmpty()) {
                     // The bytes that pick the row: service (0x41 for a response) and the PID if there is one
                     const uint8_t sid = static_cast<uint8_t>(pmsg.payload.at(0));
@@ -668,13 +668,25 @@ QVariant UnifiedTraceViewModel::data_DisplayRole(const QModelIndex &index, [[may
                     LinFrame *linFrame = backend()->findLinFrame(msg);
                     return linFrame ? linFrame->name() : QStringLiteral("");
                 }
-                if (item->parentItem() != m_rootItem.get()) {
+                if (item->parentItem() != m_rootItem.get() && item->parentItem()->isProtocol()) {
+                    // Raw frames under a decoded message: name them after the transport
+                    // that carried them. Only UDS and OBD-II ride on ISO-TP; an XCP DTO
+                    // whose PID is 0x00..0x3F is not an ISO-TP single frame.
+                    const QString &protocol = item->parentItem()->protocolMessage().protocol;
                     uint8_t firstByte = msg.getByte(0);
-                    uint8_t type = (firstByte >> 4) & 0x0F;
-                    if (type == 0x0) return tr("[tp] Single Frame");
-                    if (type == 0x1) return tr("[tp] First Frame");
-                    if (type == 0x2) return tr("[tp] Consecutive Frame (SN: %1)").arg(firstByte & 0x0F);
-                    if (type == 0x3) return tr("[tp] Flow Control");
+                    if (protocol.compare("uds", Qt::CaseInsensitive) == 0
+                        || protocol.compare("obd2", Qt::CaseInsensitive) == 0) {
+                        uint8_t type = (firstByte >> 4) & 0x0F;
+                        if (type == 0x0) return tr("[tp] Single Frame");
+                        if (type == 0x1) return tr("[tp] First Frame");
+                        if (type == 0x2) return tr("[tp] Consecutive Frame (SN: %1)").arg(firstByte & 0x0F);
+                        if (type == 0x3) return tr("[tp] Flow Control");
+                    } else if (protocol.compare("j1939", Qt::CaseInsensitive) == 0 && msg.isExtended()) {
+                        // J1939 transport protocol: TP.CM (PF 0xEC), TP.DT (PF 0xEB) with its sequence number
+                        const uint8_t pf = static_cast<uint8_t>((msg.getId() >> 16) & 0xFF);
+                        if (pf == 0xEC) return tr("[tp] TP.CM");
+                        if (pf == 0xEB) return tr("[tp] TP.DT %1").arg(firstByte);
+                    }
                 }
                 {
                     CanDbMessage *dbmsg = backend()->findDbMessage(msg);

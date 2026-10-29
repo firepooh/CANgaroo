@@ -241,6 +241,9 @@ void ObdDecoderTest::negativeResponse()
     QCOMPARE(out.id, 0x7F01u);                          // not 0x0100, the row of PID 00
     QCOMPARE(out.name, QString("Current data"));
     QCOMPARE(out.description, QString("negative response: SubFunction Not Supported"));
+    // A code without a name: upper-case hex digits, lower-case "0x"
+    QCOMPARE(obd.tryDecode(frame(0x7E8, { 0x03, 0x7F, 0x01, 0xAB }), out), DecodeStatus::Completed);
+    QCOMPARE(out.description, QString("negative response: unknown (0xAB)"));
     // A negative response to a UDS service is not OBD
     QCOMPARE(obd.tryDecode(frame(0x7E8, { 0x03, 0x7F, 0x22, 0x31 }), out), DecodeStatus::Ignored);
 }

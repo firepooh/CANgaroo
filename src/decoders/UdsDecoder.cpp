@@ -5,6 +5,12 @@ UdsDecoder::UdsDecoder() {}
 static constexpr uint32_t k_extendedSessionFlag = 0x80000000u;
 static constexpr uint32_t k_txSessionFlag       = 0x40000000u;
 
+// Two upper-case hex digits; the "0x" prefix stays lower case
+static QString hexByte(uint32_t v)
+{
+    return QString::number(v & 0xFFu, 16).rightJustified(2, QChar('0')).toUpper();
+}
+
 // RX and TX traffic on the same ID get independent session slots. Without
 // this, an interface that loops transmitted frames back on the RX path
 // (SocketCAN/vcan, some real adapters) delivers every sent frame twice, and
@@ -94,10 +100,10 @@ DecodeStatus UdsDecoder::tryDecode(const BusMessage& frame, ProtocolMessage& out
                     : "negative response: incomplete";
             } else if (sid & 0x40) {
                 outMsg.type = MessageType::PositiveResponse;
-                outMsg.description = QString("positive response to 0x%1").arg(sid - 0x40, 2, 16, QChar('0'));
+                outMsg.description = QString("positive response to 0x%1").arg(hexByte(sid - 0x40));
             } else {
                 outMsg.type = MessageType::Request;
-                outMsg.description = QString("uds request, sid 0x%1").arg(sid, 2, 16, QChar('0'));
+                outMsg.description = QString("uds request, sid 0x%1").arg(hexByte(sid));
             }
 
             m_sessions.remove(key);
@@ -158,10 +164,10 @@ DecodeStatus UdsDecoder::tryDecode(const BusMessage& frame, ProtocolMessage& out
                             : "negative response: incomplete";
                     } else if (sid & 0x40) {
                         outMsg.type = MessageType::PositiveResponse;
-                        outMsg.description = QString("positive response to 0x%1").arg(sid - 0x40, 2, 16, QChar('0'));
+                        outMsg.description = QString("positive response to 0x%1").arg(hexByte(sid - 0x40));
                     } else {
                         outMsg.type = MessageType::Request;
-                        outMsg.description = QString("uds request, sid 0x%1").arg(sid, 2, 16, QChar('0'));
+                        outMsg.description = QString("uds request, sid 0x%1").arg(hexByte(sid));
                     }
 
                     m_sessions.remove(key);
@@ -218,7 +224,7 @@ QString UdsDecoder::interpretService(uint8_t sid) {
         case 0x85: return "ControlDTCSetting";
         case 0x86: return "ResponseOnEvent";
         case 0x87: return "LinkControl";
-        default:   return QString("Service 0x%1").arg(sid, 2, 16, QChar('0'));
+        default:   return QString("Service 0x%1").arg(hexByte(sid));
     }
 }
 
@@ -283,6 +289,6 @@ QString UdsDecoder::interpretNrc(uint8_t nrc) {
         case 0x91: return "Torque Converter Clutch Locked";
         case 0x92: return "Voltage Too High";
         case 0x93: return "Voltage Too Low";
-        default:   return QString("unknown (0x%1)").arg(nrc, 2, 16, QChar('0'));
+        default:   return QString("unknown (0x%1)").arg(hexByte(nrc));
     }
 }

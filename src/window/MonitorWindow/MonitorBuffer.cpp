@@ -268,7 +268,8 @@ QString MonitorBuffer::headerText(int column) const
 {
     switch (column) {
         case col_count:       return tr("Count");
-        case col_time:        return _absoluteTime ? tr("Time (abs)") : tr("Time (rel)");
+        // Matches the Time box: Relative = since measurement start, Delta = since the previous frame
+        case col_time:        return _absoluteTime ? tr("Time (rel)") : tr("Δt");
         case col_tx:          return tr("Tx");
         case col_er:          return tr("Er");
         case col_description: return tr("Description");

@@ -50,12 +50,15 @@ private slots:
     void udsConsecutiveFrameWithoutFirstFrameIsIgnored();
     void udsResetDropsPendingReassembly();
     void udsInterleavedSessionsAreKeptApart();
+    void udsDescriptionUsesUpperCaseHex();
 
     // --- J1939 ---
     void j1939SingleFrame();
     void j1939IgnoresStandardFrames();
     void j1939ExtractsAddressMetadata();
     void j1939IgnoresDiagnosticPgnSoUdsCanClaimIt();
+    void j1939RequestAndAcknowledgment();
+    void j1939DescriptionUsesUpperCaseHex();
 
     // --- UDS on 29-bit (extended) identifiers ---
     void udsExtendedSingleFrameExtractsAddressMetadata();
@@ -277,7 +280,8 @@ void DecodersTest::j1939SingleFrame()
     QCOMPARE(out.name, QString("Engine Fluid Level/Pressure"));
     QCOMPARE(out.protocol, QString("J1939"));
     QCOMPARE(out.id, 0xFEEFu);
-    QCOMPARE(out.type, MessageType::Request);
+    // Broadcast data is neither a request nor a response (it used to be marked Request)
+    QCOMPARE(out.type, MessageType::Unknown);
 }
 
 // J1939 is an extended-identifier protocol; 11-bit frames are not its business.
@@ -327,6 +331,81 @@ void DecodersTest::j1939IgnoresDiagnosticPgnSoUdsCanClaimIt()
     functional.setExtended(true);
     functional.setLength(8);
     QCOMPARE(decoder.tryDecode(functional, out), DecodeStatus::Ignored);
+}
+
+// Hex digits in descriptions are upper case, the "0x" prefix lower case.
+// SID 0x2E is WriteDataByIdentifier, 0x6E its positive response (ISO 14229-1).
+void DecodersTest::udsDescriptionUsesUpperCaseHex()
+{
+    UdsDecoder decoder;
+    ProtocolMessage out;
+
+    BusMessage req(0x7E0);
+    req.setLength(8);
+    req.setByte(0, 0x04); req.setByte(1, 0x2E); req.setByte(2, 0xF1); req.setByte(3, 0x90); req.setByte(4, 0x01);
+    QCOMPARE(decoder.tryDecode(req, out), DecodeStatus::Completed);
+    QCOMPARE(out.description, QString("uds request, sid 0x2E"));
+
+    BusMessage rsp(0x7E8);
+    rsp.setLength(8);
+    rsp.setByte(0, 0x03); rsp.setByte(1, 0x6E); rsp.setByte(2, 0xF1); rsp.setByte(3, 0x90);
+    QCOMPARE(decoder.tryDecode(rsp, out), DecodeStatus::Completed);
+    QCOMPARE(out.description, QString("positive response to 0x2E"));
+}
+
+// SAE J1939-21: Request PGN 59904 (0xEA00) carries the requested PGN in 3 bytes;
+// Acknowledgment PGN 59392 (0xE800) control byte 0 = ACK, 1 = NACK,
+// 2 = Access Denied, 3 = Cannot Respond. Other PGNs are plain data.
+void DecodersTest::j1939RequestAndAcknowledgment()
+{
+    J1939Decoder decoder;
+    ProtocolMessage out;
+
+    BusMessage req(0x18EA00F9);   // request from SA 0xF9 to DA 0x00 for PGN 0xFEEC (VIN)
+    req.setExtended(true);
+    req.setLength(3);
+    req.setByte(0, 0xEC); req.setByte(1, 0xFE); req.setByte(2, 0x00);
+    QCOMPARE(decoder.tryDecode(req, out), DecodeStatus::Completed);
+    QCOMPARE(out.id, 0xEA00u);
+    QCOMPARE(out.name, QString("Request"));
+    QCOMPARE(out.type, MessageType::Request);
+
+    BusMessage ack(0x18E8FF00);   // global ACK from SA 0x00
+    ack.setExtended(true);
+    ack.setLength(8);
+    const uint8_t ackData[8] = { 0x00, 0xFF, 0xFF, 0xFF, 0xF9, 0xEC, 0xFE, 0x00 };
+    for (int i = 0; i < 8; i++) { ack.setByte(static_cast<uint8_t>(i), ackData[i]); }
+    QCOMPARE(decoder.tryDecode(ack, out), DecodeStatus::Completed);
+    QCOMPARE(out.id, 0xE800u);
+    QCOMPARE(out.name, QString("Acknowledgment"));
+    QCOMPARE(out.type, MessageType::PositiveResponse);
+
+    for (uint8_t control : { uint8_t(1), uint8_t(2), uint8_t(3) }) {
+        ack.setByte(0, control);
+        QCOMPARE(decoder.tryDecode(ack, out), DecodeStatus::Completed);
+        QCOMPARE(out.type, MessageType::NegativeResponse);
+    }
+}
+
+// Upper-case hex digits in names and descriptions; the PDU1 destination is the PS field
+void DecodersTest::j1939DescriptionUsesUpperCaseHex()
+{
+    J1939Decoder decoder;
+    ProtocolMessage out;
+
+    BusMessage bcast(0x18FF12AB);   // proprietary B PGN 0xFF12 from SA 0xAB
+    bcast.setExtended(true);
+    bcast.setLength(8);
+    QCOMPARE(decoder.tryDecode(bcast, out), DecodeStatus::Completed);
+    QCOMPARE(out.name, QString("PGN: 0xFF12"));
+    QCOMPARE(out.description, QString("PDU2 (Broadcast) from SA [0xAB]"));
+
+    BusMessage p2p(0x0C00FA0E);     // TSC1 (PGN 0) from SA 0x0E to DA 0xFA
+    p2p.setExtended(true);
+    p2p.setLength(8);
+    QCOMPARE(decoder.tryDecode(p2p, out), DecodeStatus::Completed);
+    QCOMPARE(out.id, 0x0000u);
+    QCOMPARE(out.description, QString("PDU1 (Peer-to-Peer) from SA [0x0E] to DA [0xFA]"));
 }
 
 void DecodersTest::udsExtendedSingleFrameExtractsAddressMetadata()

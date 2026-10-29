@@ -4,9 +4,30 @@
 
 J1939Decoder::J1939Decoder() {}
 
+// Upper-case hex digits; the "0x" prefix stays lower case
+static QString hexDigits(uint32_t v, int width)
+{
+    return QString::number(v, 16).rightJustified(width, QChar('0')).toUpper();
+}
+
+// Request (PGN 0xEA00) asks for a PGN; Acknowledgment (0xE800) answers with
+// ACK (control byte 0) or NACK, Access Denied, Cannot Respond (1..3).
+// Every other PGN is plain data: neither a request nor a response.
+static MessageType messageType(uint32_t pgn, const QByteArray &data)
+{
+    if (pgn == 0xEA00) { return MessageType::Request; }
+    if (pgn == 0xE800 && !data.isEmpty()) {
+        return static_cast<uint8_t>(data.at(0)) == 0 ? MessageType::PositiveResponse
+                                                     : MessageType::NegativeResponse;
+    }
+    return MessageType::Unknown;
+}
+
 static QString pgnName(uint32_t pgn)
 {
     switch (pgn) {
+        case 0xEA00: return "Request";
+        case 0xE800: return "Acknowledgment";
         case 0xFEEC: return "Vehicle Identification (VIN)";
         case 0xF004: return "Electronic Engine Controller 1 (EEC1)";
         case 0xFEEF: return "Engine Fluid Level/Pressure";
@@ -17,7 +38,7 @@ static QString pgnName(uint32_t pgn)
         case 0xFECB: return "Previously Active DTCs";
         case 0xFEDA: return "Software Identification";
         case 0xFEDB: return "ECU Identification Information";
-        default:     return QString("PGN: 0x%1").arg(pgn, 4, 16, QChar('0'));
+        default:     return QString("PGN: 0x%1").arg(hexDigits(pgn, 4));
     }
 }
 
@@ -91,7 +112,7 @@ DecodeStatus J1939Decoder::tryDecode(const BusMessage& frame, ProtocolMessage& o
                 outMsg.protocol  = "J1939";
                 outMsg.timestamp = static_cast<uint64_t>(session.frames.first().getFloatTimestamp() * 1000000.0);
                 outMsg.id        = session.pgn;
-                outMsg.type      = MessageType::Request;
+                outMsg.type      = messageType(session.pgn, outMsg.payload);
                 outMsg.name      = pgnName(session.pgn);
 
                 // Metadata from the TP.CM header frame
@@ -131,14 +152,13 @@ DecodeStatus J1939Decoder::tryDecode(const BusMessage& frame, ProtocolMessage& o
         outMsg.protocol  = "J1939";
         outMsg.timestamp = static_cast<uint64_t>(frame.getFloatTimestamp() * 1000000.0);
         outMsg.id        = pgn;
-        outMsg.type      = MessageType::Request;
+        outMsg.type      = messageType(pgn, outMsg.payload);
         outMsg.name      = pgnName(pgn);
         outMsg.description = isPDU1
             ? QString("PDU1 (Peer-to-Peer) from SA [0x%1] to DA [0x%2]")
-                  .arg(sa, 2, 16, QChar('0'))
-                  .arg(ps, 2, 16, QChar('0'))
+                  .arg(hexDigits(sa, 2), hexDigits(ps, 2))
             : QString("PDU2 (Broadcast) from SA [0x%1]")
-                  .arg(sa, 2, 16, QChar('0'));
+                  .arg(hexDigits(sa, 2));
 
         outMsg.metadata["Priority"]     = (id >> 26) & 0x7;
         outMsg.metadata["Reserved"]     = (id >> 25) & 1;
