@@ -35,6 +35,7 @@
 #include "db/model/CanDbSignal.h"
 #include "db/model/LinFrame.h"
 #include "db/model/LinSignal.h"
+#include "TraceFind.h"
 
 MonitorBuffer::MonitorBuffer(Backend &backend, QObject *parent)
     : QObject(parent), _backend(backend)
@@ -52,11 +53,13 @@ MonitorBuffer::MonitorBuffer(Backend &backend, QObject *parent)
     {
         // BusTrace prunes from the front, so already-processed indices shift down
         _lastProcessed = std::max(-1, _lastProcessed - count);
+        _firstIndex = std::max(0, _firstIndex - count);
     });
     connect(trace, &BusTrace::afterClear, this, [this]()
     {
         clearEntries();
         _lastProcessed = -1;
+        _firstIndex = 0;
         emit cleared();
     });
 
@@ -176,9 +179,11 @@ void MonitorBuffer::toggleExpanded(int entryIndex)
 
 void MonitorBuffer::erase()
 {
-    // Clears this view only; the trace and the other windows keep their frames
+    // Clears this view only; the trace and the other windows keep their frames.
+    // A later rebuild (filter, mode) starts here too, so erased frames stay away.
     clearEntries();
     _lastProcessed = static_cast<int>(_backend.getTrace()->size()) - 1;
+    _firstIndex = _lastProcessed + 1;
     emit cleared();
 }
 
@@ -501,6 +506,58 @@ int MonitorBuffer::find(int column, const QString &text, int from, bool forward)
     return -1;
 }
 
+bool MonitorBuffer::entryMatches(const Entry &entry, const QString &text) const
+{
+    if (text.isEmpty()) { return false; }
+    const BusMessage &msg = entry.msg;
+    if (TraceFind::matchesText(text, this->text(entry, col_arbid))
+        || TraceFind::matchesText(text, this->text(entry, col_description))
+        || TraceFind::matchesData(text, dataHex(entry))
+        || TraceFind::matchesText(text, _memos.value(memoKey(msg)))) {
+        return true;
+    }
+    return matchesOnlyInSignals(entry, text);
+}
+
+bool MonitorBuffer::matchesOnlyInSignals(const Entry &entry, const QString &text) const
+{
+    for (int s = 0; s < entry.signalLines; ++s) {
+        if (TraceFind::matchesText(text, signalText(entry, s))) { return true; }
+    }
+    return false;
+}
+
+QVector<int> MonitorBuffer::findAll(const QString &text) const
+{
+    QVector<int> found;
+    if (text.isEmpty()) { return found; }
+    for (int i = 0; i < entryCount(); ++i) {
+        if (entryMatches(*_entries[i], text)) { found.append(i); }
+    }
+    return found;
+}
+
+bool MonitorBuffer::frameMatches(const BusMessage &msg) const
+{
+    if (_matchText.isEmpty()) { return true; }
+    Entry probe;
+    probe.msg = msg;
+    probe.signalLines = signalCount(msg);
+    return entryMatches(probe, _matchText);
+}
+
+void MonitorBuffer::setMatchText(const QString &text)
+{
+    if (text == _matchText) { return; }
+    _matchText = text;
+    rebuild();
+}
+
+int MonitorBuffer::pendingFrames() const
+{
+    return std::max(0, static_cast<int>(_backend.getTrace()->size()) - 1 - _lastProcessed);
+}
+
 int MonitorBuffer::dataLineCount(const BusMessage &msg) noexcept
 {
     if (msg.busType() != BusType::CAN || msg.isErrorFrame() || msg.getLength() <= data_line_min_length) {
@@ -617,7 +674,7 @@ void MonitorBuffer::processFixed(int size)
 
     for (int i = _lastProcessed + 1; i < size; ++i) {
         const BusMessage msg = trace->getMessage(i);
-        if (!_filter.accepts(msg)) {
+        if (!_filter.accepts(msg) || !frameMatches(msg)) {
             _lastProcessed = i;
             continue;
         }
@@ -676,7 +733,7 @@ int MonitorBuffer::processScroll(int size)
     const int first = std::max(_lastProcessed + 1, size - scroll_max_entries);
     for (int i = first; i < size; ++i) {
         BusMessage msg = trace->getMessage(i);
-        if (!_filter.accepts(msg)) { continue; }
+        if (!_filter.accepts(msg) || !frameMatches(msg)) { continue; }
         auto entry = std::make_unique<Entry>();
         entry->msg = std::move(msg);
         entry->key = makeKey(entry->msg);
@@ -726,7 +783,7 @@ void MonitorBuffer::rebuild()
 {
     clearEntries();
     const int size = static_cast<int>(_backend.getTrace()->size());
-    _lastProcessed = (_mode == Mode::Fixed) ? -1 : std::max(-1, size - 1 - scroll_max_entries);
+    _lastProcessed = std::max(_firstIndex - 1, (_mode == Mode::Fixed) ? -1 : size - 1 - scroll_max_entries);
     emit cleared();
     processNewMessages();
 }

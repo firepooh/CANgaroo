@@ -22,7 +22,6 @@
 
 #include <QSet>
 #include <QSortFilterProxyModel>
-#include <QRegularExpression>
 
 #include "driver/CanDriver.h"
 
@@ -38,13 +37,15 @@ public:
     void setHiddenLinFrameIds(const QSet<uint8_t> &ids);
     void setHiddenInterfaces(const QSet<BusInterfaceId> &ids);
 
+    // Find (GUI_DESIGN.md T-8): ID, Description, Data (spaces ignored) or Info of the
+    // line at `index`, case-insensitive. Also used by the toolbar's Find.
+    [[nodiscard]] static bool lineMatches(const QModelIndex &index, const QString &text);
+
 public slots:
     void setFilterText(QString filtertext);
 
 private:
-    QString _filterText;
-    QRegularExpression _cachedRegex;
-    bool _regexValid = false;
+    QString _filterText;     // Only matches (T-11): the Find text, empty = off
 
     bool _showTx = true;
     bool _showRx = true;

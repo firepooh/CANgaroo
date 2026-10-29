@@ -21,5 +21,13 @@
         <file>assets/icons/preferences-other-symbolic.svg</file>
         <file>assets/icons/help-about-symbolic.svg</file>
         <file>assets/icons/edit-clear-symbolic.svg</file>
+        <file>assets/icons/view-list-details-symbolic.svg</file>
+        <file>assets/icons/view-expand-all-symbolic.svg</file>
+        <file>assets/icons/chronometer-symbolic.svg</file>
+        <file>assets/icons/media-playback-pause-symbolic.svg</file>
+        <file>assets/icons/edit-find-symbolic.svg</file>
+        <file>assets/icons/view-filter-symbolic.svg</file>
+        <file>assets/icons/go-bottom-symbolic.svg</file>
+        <file>assets/icons/view-more-symbolic.svg</file>
     </qresource>
 </RCC>

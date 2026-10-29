@@ -20,10 +20,10 @@
 #include "TraceFilterModel.h"
 #include "BaseTraceViewModel.h"
 
-#include <QRegularExpression>
 #include <QSortFilterProxyModel>
 
 #include "core/BusMessage.h"
+#include "window/MonitorWindow/TraceFind.h"
 
 TraceFilterModel::TraceFilterModel(QObject *parent)
     : QSortFilterProxyModel{parent},
@@ -37,12 +37,16 @@ TraceFilterModel::TraceFilterModel(QObject *parent)
 void TraceFilterModel::setFilterText(QString filtertext)
 {
     _filterText = filtertext;
-    QRegularExpression re(filtertext, QRegularExpression::CaseInsensitiveOption);
-    _regexValid = re.isValid();
-    if (_regexValid)
-    {
-        _cachedRegex = re;
-    }
+}
+
+bool TraceFilterModel::lineMatches(const QModelIndex &index, const QString &text)
+{
+    if (text.isEmpty() || !index.isValid()) { return false; }
+    auto cell = [&index](int column) { return index.sibling(index.row(), column).data().toString(); };
+    return TraceFind::matchesText(text, cell(BaseTraceViewModel::column_canid))
+        || TraceFind::matchesText(text, cell(BaseTraceViewModel::column_name))
+        || TraceFind::matchesText(text, cell(BaseTraceViewModel::column_comment))
+        || TraceFind::matchesData(text, cell(BaseTraceViewModel::column_data));
 }
 
 void TraceFilterModel::setShowTx(bool show)
@@ -131,40 +135,23 @@ bool TraceFilterModel::filterAcceptsRow(int source_row, const QModelIndex &sourc
         }
     }
 
-    // Text/regex filter
-    if (_filterText.length() == 0)
+    // Only matches (T-11): Find's rules. A row stays when it or one of its decoded
+    // lines matches; the lines under a row that stays are all shown.
+    if (_filterText.isEmpty() || source_parent.isValid())
     {
         return true;
     }
-
-    static const int columns[] = {
-        BaseTraceViewModel::column_canid,
-        BaseTraceViewModel::column_name,
-        BaseTraceViewModel::column_channel,
-        BaseTraceViewModel::column_sender,
-        BaseTraceViewModel::column_type,
-    };
-
-    for (int col : columns)
+    const QModelIndex row = sourceModel()->index(source_row, 0, source_parent);
+    if (lineMatches(row, _filterText))
     {
-        QModelIndex idx = sourceModel()->index(source_row, col, source_parent);
-        QString datastr = sourceModel()->data(idx).toString();
-
-        if (_regexValid)
+        return true;
+    }
+    for (int child = 0; child < sourceModel()->rowCount(row); ++child)
+    {
+        if (lineMatches(sourceModel()->index(child, 0, row), _filterText))
         {
-            if (datastr.contains(_cachedRegex))
-            {
-                return true;
-            }
-        }
-        else
-        {
-            if (datastr.contains(_filterText, Qt::CaseInsensitive))
-            {
-                return true;
-            }
+            return true;
         }
     }
-
     return false;
 }

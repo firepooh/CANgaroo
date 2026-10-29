@@ -19,19 +19,19 @@
 
 #pragma once
 
+#include <QTimer>
+#include <QVector>
 #include <QWidget>
 
 class Backend;
 class MonitorBuffer;
 class MonitorTable;
-class QCheckBox;
-class QComboBox;
 class QDomDocument;
 class QDomElement;
-class QLineEdit;
-class QToolButton;
+class QMenu;
+class TraceToolbar;
 
-// Toolbar and MonitorTable over a MonitorBuffer
+// TraceToolbar and MonitorTable over a MonitorBuffer
 class MonitorView : public QWidget
 {
     Q_OBJECT
@@ -48,17 +48,15 @@ private:
     Backend &_backend;
     MonitorBuffer *_buffer;
     MonitorTable *_table;
-    QComboBox *_viewBox;      // Fixed / Scroll
-    QComboBox *_timeBox;      // Delta / Relative
-    QToolButton *_pauseButton;
-    QToolButton *_filterButton;
-    QCheckBox *_expandBox;
-    QComboBox *_refreshBox;
-    QComboBox *_findColumn;
-    QLineEdit *_findText;
+    TraceToolbar *_toolbar;
+    QTimer _pauseInfoTimer;
+    QVector<int> _findMatches;      // entry indices of the last search
 
-    void showHeaderMenu(const QPoint &pos);
+    void fillMoreMenu(QMenu *menu);
     void openFilterDialog();
     void updateFilterButton();
     void updateSortIndicator();
+    void updateFindPosition();
+    void find(bool forward);
+    void applyMatchFilter();
 };

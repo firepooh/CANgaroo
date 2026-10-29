@@ -21,36 +21,18 @@
 
 #include <algorithm>
 
-#include <QCheckBox>
-#include <QComboBox>
+#include <QActionGroup>
 #include <QDomDocument>
-#include <QHBoxLayout>
 #include <QHeaderView>
-#include <QLabel>
-#include <QLineEdit>
 #include <QMenu>
 #include <QSettings>
-#include <QToolButton>
 #include <QVBoxLayout>
 
-#include "helpers/apphelpers.h"
 #include "window/TraceWindow/TraceFilterDialog.h"
 #include "MonitorBuffer.h"
 #include "MonitorTable.h"
-
-namespace
-{
-
-QToolButton *makeButton(const QString &text, bool checkable, QWidget *parent)
-{
-    auto *button = new QToolButton(parent);
-    button->setText(text);
-    button->setCheckable(checkable);
-    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    return button;
-}
-
-} // namespace
+#include "TraceFind.h"
+#include "TraceToolbar.h"
 
 MonitorView::MonitorView(Backend &backend, QWidget *parent)
     : QWidget(parent),
@@ -58,86 +40,25 @@ MonitorView::MonitorView(Backend &backend, QWidget *parent)
 {
     _buffer = new MonitorBuffer(backend, this);
     _table = new MonitorTable(_buffer, this);
+    _toolbar = new TraceToolbar(this);
 
-    // Same order and names as the UDS / J1939 / XCP tabs: View, Time | Filter | Find | Clear | own items
-    _viewBox = new QComboBox(this);
-    _viewBox->addItem(tr("Fixed"), false);
-    _viewBox->addItem(tr("Scroll"), true);
-    _viewBox->setToolTip(tr("Fixed: one row per ID. Scroll: every frame in arrival order"));
-    _expandBox = new QCheckBox(tr("Expand"), this);
-    _expandBox->setChecked(true);
-    _expandBox->setToolTip(tr("Show the data lines and signals of every row"));
-    _timeBox = new QComboBox(this);
-    _timeBox->addItem(tr("Delta"), false);
-    _timeBox->addItem(tr("Relative"), true);
-    _timeBox->setToolTip(tr("Delta: time since the previous frame. Relative: time since measurement start"));
-    _pauseButton = makeButton(tr("Pause"), true, this);
-    _pauseButton->setToolTip(tr("Freeze this view; frames are still recorded"));
-    QToolButton *eraseButton = makeButton(tr("Clear"), false, this);
-    eraseButton->setIcon(AppHelpers::themedIcon("user-trash-full", ":/assets/icons/edit-clear-symbolic.svg"));
-    eraseButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    eraseButton->setToolTip(tr("Clear this Monitor view only; the trace and the other tabs keep their frames"));
-    _filterButton = makeButton(tr("Filter"), false, this);
-    _filterButton->setIcon(AppHelpers::themedIcon("view-filter", ":/assets/filter-symbolic.svg"));
-    _filterButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-
-    _refreshBox = new QComboBox(this);
-    _refreshBox->setToolTip(tr("How often new frames are shown. Shorter needs more CPU"));
-    for (int ms = MonitorBuffer::refresh_min_ms; ms <= MonitorBuffer::refresh_max_ms; ms += 10) {
-        _refreshBox->addItem(tr("%1 ms").arg(ms), ms);
-    }
-    // The last choice is the default for new workspaces; a workspace may override it
-    const int refreshMs = QSettings().value("monitor/refreshMs", MonitorBuffer::refresh_default_ms).toInt();
-    _refreshBox->setCurrentIndex(std::max(0, _refreshBox->findData(refreshMs)));
-    _buffer->setRefreshInterval(_refreshBox->currentData().toInt());
-
-    _findColumn = new QComboBox(this);
-    for (int col : {MonitorBuffer::col_arbid, MonitorBuffer::col_description, MonitorBuffer::col_data,
-                    MonitorBuffer::col_network, MonitorBuffer::col_node, MonitorBuffer::col_memo}) {
-        _findColumn->addItem(_buffer->headerText(col), col);
-    }
-    _findText = new QLineEdit(this);
-    _findText->setClearButtonEnabled(true);
-    _findText->setMaximumWidth(220);
-    QToolButton *prevButton = makeButton(tr("Prev"), false, this);
-    QToolButton *nextButton = makeButton(tr("Next"), false, this);
-
-    auto *toolbar = new QHBoxLayout();
-    toolbar->setContentsMargins(4, 4, 4, 2);
-    toolbar->setSpacing(6);
-    // Same widths as the View / Time combos of the other tabs (TraceWindow::applyMonitorToolbarLayout)
-    _viewBox->setFixedWidth(fontMetrics().horizontalAdvance(QStringLiteral("Rolling Log")) + 48);
-    _timeBox->setFixedWidth(fontMetrics().horizontalAdvance(QStringLiteral("Absolute (UTC)")) + 48);
-    toolbar->addWidget(new QLabel(tr("View:"), this));
-    toolbar->addWidget(_viewBox);
-    toolbar->addWidget(new QLabel(tr("Time:"), this));
-    toolbar->addWidget(_timeBox);
-    toolbar->addSpacing(16);
-    toolbar->addWidget(_filterButton);
-    toolbar->addSpacing(16);
-    toolbar->addWidget(new QLabel(tr("Find:"), this));
-    toolbar->addWidget(_findColumn);
-    toolbar->addWidget(_findText);
-    toolbar->addWidget(prevButton);
-    toolbar->addWidget(nextButton);
-    toolbar->addSpacing(16);
-    toolbar->addWidget(eraseButton);
-    toolbar->addSpacing(16);
-    toolbar->addWidget(_expandBox);
-    toolbar->addWidget(_pauseButton);
-    toolbar->addWidget(new QLabel(tr("Refresh:"), this));
-    toolbar->addWidget(_refreshBox);
-    toolbar->addStretch(1);
+    // The last Refresh choice is the default for new workspaces; a workspace may override it
+    _buffer->setRefreshInterval(QSettings().value("monitor/refreshMs", MonitorBuffer::refresh_default_ms).toInt());
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    layout->addLayout(toolbar);
+    layout->addWidget(_toolbar);
     layout->addWidget(_table);
 
     QHeaderView *header = _table->header();
     header->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(header, &QHeaderView::customContextMenuRequested, this, &MonitorView::showHeaderMenu);
+    connect(header, &QHeaderView::customContextMenuRequested, this, [this, header](const QPoint &pos)
+    {
+        QMenu menu(this);
+        fillMoreMenu(&menu);
+        menu.exec(header->mapToGlobal(pos));
+    });
 
     // Click a column title to sort the Fixed view by it, again to reverse
     connect(header, &QHeaderView::sortIndicatorChanged, this, [this](int column, Qt::SortOrder order)
@@ -150,45 +71,138 @@ MonitorView::MonitorView(Backend &backend, QWidget *parent)
     });
     updateSortIndicator();
 
-    connect(_filterButton, &QToolButton::clicked, this, &MonitorView::openFilterDialog);
-    updateFilterButton();
-
-    connect(_viewBox, &QComboBox::currentIndexChanged, this, [this]()
+    connect(_toolbar, &TraceToolbar::scrollToggled, this, [this](bool on)
     {
-        const bool scroll = _viewBox->currentData().toBool();
-        _buffer->setMode(scroll ? MonitorBuffer::Mode::Scroll : MonitorBuffer::Mode::Fixed);
+        _buffer->setMode(on ? MonitorBuffer::Mode::Scroll : MonitorBuffer::Mode::Fixed);
         updateSortIndicator();
         emit settingsChanged();
     });
-    connect(_expandBox, &QCheckBox::toggled, this, [this](bool on)
+    connect(_toolbar, &TraceToolbar::expandToggled, this, [this](bool on)
     {
         _buffer->setAllExpanded(on);
         emit settingsChanged();
     });
-    connect(_timeBox, &QComboBox::currentIndexChanged, this, [this]()
+    connect(_toolbar, &TraceToolbar::absTimeToggled, this, [this](bool on)
     {
-        _buffer->setAbsoluteTime(_timeBox->currentData().toBool());
+        _buffer->setAbsoluteTime(on);
         emit settingsChanged();
     });
-    connect(_refreshBox, &QComboBox::currentIndexChanged, this, [this]()
+    connect(_toolbar, &TraceToolbar::pauseToggled, this, [this](bool on)
     {
-        const int ms = _refreshBox->currentData().toInt();
-        _buffer->setRefreshInterval(ms);
-        QSettings().setValue("monitor/refreshMs", ms);
-        emit settingsChanged();
+        _buffer->setPaused(on);
+        if (on) {
+            _pauseInfoTimer.start();
+            _toolbar->setPauseInfo(0, 0);
+        } else {
+            _pauseInfoTimer.stop();
+        }
     });
-    connect(_pauseButton, &QToolButton::toggled, _buffer, &MonitorBuffer::setPaused);
-    connect(eraseButton, &QToolButton::clicked, _buffer, &MonitorBuffer::erase);
+    _pauseInfoTimer.setInterval(500);
+    connect(&_pauseInfoTimer, &QTimer::timeout, this, [this]() { _toolbar->setPauseInfo(_buffer->pendingFrames(), 0); });
+    connect(_toolbar, &TraceToolbar::eraseClicked, _buffer, &MonitorBuffer::erase);
 
-    auto find = [this](bool forward)
+    connect(_toolbar, &TraceToolbar::findTextChanged, this, [this]()
     {
-        const QString text = _findText->text().trimmed();
-        if (!text.isEmpty()) { _table->find(_findColumn->currentData().toInt(), text, forward); }
-    };
-    connect(prevButton, &QToolButton::clicked, this, [find]() { find(false); });
-    connect(nextButton, &QToolButton::clicked, this, [find]() { find(true); });
-    connect(_findText, &QLineEdit::returnPressed, this, [find]() { find(true); });
+        applyMatchFilter();
+        updateFindPosition();
+        emit settingsChanged();
+    });
+    connect(_toolbar, &TraceToolbar::findNext, this, [this]() { find(true); });
+    connect(_toolbar, &TraceToolbar::findPrevious, this, [this]() { find(false); });
+    connect(_toolbar, &TraceToolbar::onlyMatchesToggled, this, [this]()
+    {
+        applyMatchFilter();
+        emit settingsChanged();
+    });
+    connect(_toolbar, &TraceToolbar::filterClicked, this, &MonitorView::openFilterDialog);
+    updateFilterButton();
+
+    connect(_toolbar, &TraceToolbar::followToggled, _table, &MonitorTable::setFollow);
+    connect(_table, &MonitorTable::followChanged, _toolbar, &TraceToolbar::setFollow);
+    connect(_toolbar, &TraceToolbar::moreMenuAboutToShow, this, &MonitorView::fillMoreMenu);
     connect(_buffer, &MonitorBuffer::memosChanged, this, &MonitorView::settingsChanged);
+
+    // Same defaults as a new workspace: rows closed (Expand off)
+    _buffer->setAllExpanded(false);
+}
+
+void MonitorView::find(bool forward)
+{
+    const QString text = _toolbar->findText();
+    _findMatches = _buffer->findAll(text);
+    const int current = static_cast<int>(_findMatches.indexOf(_table->selectedEntry()));
+    const int next = TraceFind::step(current, static_cast<int>(_findMatches.size()), forward);
+    if (next >= 0) {
+        const int entry = _findMatches[next];
+        // T-10: a match in a signal line opens the row
+        _table->showFindResult(entry, _buffer->matchesOnlyInSignals(_buffer->entry(entry), text));
+        _toolbar->setFollow(false);
+    }
+    _toolbar->setFindPosition(next, static_cast<int>(_findMatches.size()));
+}
+
+void MonitorView::updateFindPosition()
+{
+    const QString text = _toolbar->findText();
+    if (text.isEmpty()) {
+        _findMatches.clear();
+        _toolbar->setFindPosition(-1, -1);
+        return;
+    }
+    _findMatches = _buffer->findAll(text);
+    _toolbar->setFindPosition(static_cast<int>(_findMatches.indexOf(_table->selectedEntry())),
+                              static_cast<int>(_findMatches.size()));
+}
+
+void MonitorView::applyMatchFilter()
+{
+    _buffer->setMatchText(_toolbar->state().onlyMatches ? _toolbar->findText() : QString());
+}
+
+void MonitorView::fillMoreMenu(QMenu *menu)
+{
+    // Refresh interval of this tab
+    QMenu *refresh = menu->addMenu(tr("Refresh"));
+    refresh->setToolTipsVisible(true);
+    auto *group = new QActionGroup(refresh);
+    for (int ms = MonitorBuffer::refresh_min_ms; ms <= MonitorBuffer::refresh_max_ms; ms += 10) {
+        QAction *action = refresh->addAction(tr("%1 ms").arg(ms));
+        action->setCheckable(true);
+        action->setChecked(_buffer->refreshInterval() == ms);
+        action->setToolTip(tr("How often new frames are shown. Shorter needs more CPU"));
+        group->addAction(action);
+        connect(action, &QAction::triggered, this, [this, ms]()
+        {
+            _buffer->setRefreshInterval(ms);
+            QSettings().setValue("monitor/refreshMs", ms);
+            emit settingsChanged();
+        });
+    }
+
+    // Columns
+    QHeaderView *header = _table->header();
+    QMenu *columns = menu->addMenu(tr("Columns"));
+    for (int col = 0; col < MonitorBuffer::column_count; ++col) {
+        QAction *action = columns->addAction(_buffer->headerText(col));
+        action->setCheckable(true);
+        action->setChecked(!header->isSectionHidden(col));
+        connect(action, &QAction::toggled, this, [this, header, col](bool on)
+        {
+            header->setSectionHidden(col, !on);
+            emit settingsChanged();
+        });
+    }
+    columns->addSeparator();
+    QAction *reset = columns->addAction(tr("Default columns"));
+    connect(reset, &QAction::triggered, this, [this, header]()
+    {
+        for (int col = 0; col < MonitorBuffer::column_count; ++col) {
+            header->setSectionHidden(col, false);
+            header->moveSection(header->visualIndex(col), col);
+        }
+        _table->applyDefaultColumnWidths();
+        emit settingsChanged();
+    });
 }
 
 void MonitorView::updateSortIndicator()
@@ -227,47 +241,16 @@ void MonitorView::openFilterDialog()
 
 void MonitorView::updateFilterButton()
 {
-    const bool active = _buffer->filter().isActive();
-    _filterButton->setText(active ? tr("Filter (on)") : tr("Filter"));
-    _filterButton->setToolTip(active ? tr("Some frames are hidden in this view. Click to change the filter")
-                                     : tr("Hide frames by direction, ID or interface in this view"));
-}
-
-void MonitorView::showHeaderMenu(const QPoint &pos)
-{
-    QHeaderView *header = _table->header();
-    QMenu menu(this);
-    for (int col = 0; col < MonitorBuffer::column_count; ++col) {
-        QAction *action = menu.addAction(_buffer->headerText(col));
-        action->setCheckable(true);
-        action->setChecked(!header->isSectionHidden(col));
-        connect(action, &QAction::toggled, this, [this, header, col](bool on)
-        {
-            header->setSectionHidden(col, !on);
-            emit settingsChanged();
-        });
-    }
-    menu.addSeparator();
-    QAction *reset = menu.addAction(tr("Default columns"));
-    connect(reset, &QAction::triggered, this, [this, header]()
-    {
-        for (int col = 0; col < MonitorBuffer::column_count; ++col) {
-            header->setSectionHidden(col, false);
-            header->moveSection(header->visualIndex(col), col);
-        }
-        _table->applyDefaultColumnWidths();
-        emit settingsChanged();
-    });
-    menu.exec(header->mapToGlobal(pos));
+    const MonitorBuffer::Filter &f = _buffer->filter();
+    _toolbar->setFilterCount(TraceFind::filterCount(f.showTx, f.showRx, static_cast<int>(f.hiddenMessageIds.size()),
+                                                    static_cast<int>(f.hiddenLinFrameIds.size()),
+                                                    static_cast<int>(f.hiddenInterfaces.size())));
 }
 
 void MonitorView::saveXML(QDomDocument &xml, QDomElement &el) const
 {
-    el.setAttribute("mode", _viewBox->currentData().toBool() ? "scroll" : "fixed");
-    el.setAttribute("expand", _expandBox->isChecked() ? "1" : "0");
-    el.setAttribute("timeAbs", _timeBox->currentData().toBool() ? "1" : "0");
-    el.setAttribute("refreshMs", _refreshBox->currentData().toInt());
-    el.setAttribute("findColumn", _findColumn->currentIndex());
+    _toolbar->state().save(el);
+    el.setAttribute("refreshMs", _buffer->refreshInterval());
     el.setAttribute("header", QString::fromLatin1(_table->header()->saveState().toBase64()));
     el.setAttribute("sortColumn", _buffer->sortColumn());
     el.setAttribute("sortDescending", _buffer->sortDescending() ? "1" : "0");
@@ -300,14 +283,20 @@ void MonitorView::saveXML(QDomDocument &xml, QDomElement &el) const
 
 void MonitorView::loadXML(const QDomElement &el)
 {
-    _viewBox->setCurrentIndex(el.attribute("mode", "fixed") == "scroll" ? 1 : 0);
-    _expandBox->setChecked(el.attribute("expand", "1") == "1");
-    _timeBox->setCurrentIndex(el.attribute("timeAbs", "0") == "1" ? 1 : 0);
+    // Workspaces before the shared toolbar wrote mode = fixed / scroll and timeAbs
+    TraceToolbar::State state;
+    state.scroll = TraceFind::scrollFromLegacyMode(el.attribute("mode", "fixed"));
+    state.absTime = el.attribute("timeAbs", "0") == "1";
+    state.load(el);
+    _toolbar->setState(state);
+    _buffer->setMode(state.scroll ? MonitorBuffer::Mode::Scroll : MonitorBuffer::Mode::Fixed);
+    _buffer->setAllExpanded(state.expand);
+    _buffer->setAbsoluteTime(state.absTime);
+    _table->setFollow(state.follow);
     if (el.hasAttribute("refreshMs")) {
-        const int index = _refreshBox->findData(el.attribute("refreshMs").toInt());
-        if (index >= 0) { _refreshBox->setCurrentIndex(index); }
+        const int ms = el.attribute("refreshMs").toInt();
+        if (ms >= MonitorBuffer::refresh_min_ms && ms <= MonitorBuffer::refresh_max_ms) { _buffer->setRefreshInterval(ms); }
     }
-    _findColumn->setCurrentIndex(el.attribute("findColumn", "0").toInt());
 
     const QByteArray header = QByteArray::fromBase64(el.attribute("header").toLatin1());
     if (!header.isEmpty()) {
@@ -341,4 +330,6 @@ void MonitorView::loadXML(const QDomElement &el)
         memos.insert(memoEl.attribute("id"), memoEl.attribute("text"));
     }
     _buffer->setMemos(memos);
+    applyMatchFilter();
+    updateFindPosition();
 }

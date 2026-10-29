@@ -31,6 +31,7 @@
 
 #include "TraceFilterModel.h"
 #include "TraceViewTypes.h"
+#include "window/MonitorWindow/TraceToolbar.h"
 
 namespace Ui {
 class TraceWindow;
@@ -38,9 +39,10 @@ class TraceWindow;
 class Backend;
 class QDomDocument;
 class QDomElement;
+class QMenu;
 class QSortFilterProxyModel;
 class QToolButton;
-class QLabel;
+class QTreeView;
 class AggregatedTraceViewModel;
 class UnifiedTraceViewModel;
 
@@ -59,7 +61,6 @@ public:
     ~TraceWindow();
 
     void setMode(mode_t mode);
-    void setTimestampMode(int mode);
 
     virtual bool saveXML(Backend &backend, QDomDocument &xml, QDomElement &root);
     virtual bool loadXML(Backend &backend, QDomElement &el);
@@ -78,11 +79,6 @@ public slots:
 private slots:
     void onRowsInserted(const QModelIndex & parent, int first, int last);
 
-    void on_cbTimestampMode_currentIndexChanged(int index);
-    void on_cbFilterChanged(void);
-
-    void on_cbTraceClearpushButton(void);
-    void on_cbViewMode_currentIndexChanged(int index);
     void on_tabs_currentChanged(int index);
     void openFilterDialog();
 
@@ -91,14 +87,13 @@ private slots:
 
 private:
     void placeToolbar(int tab);
-    void applyMonitorToolbarLayout();
+    void buildToolbar();
 
     Ui::TraceWindow *ui;
     Backend *_backend;
     QWidget *_monitorPage = nullptr;
     timestamp_mode_t _timestampMode;
     QTimer _scrollTimer;
-    QTimer _filterDebounceTimer;
     enum Category {
         Cat_Aggregated = 0,
         Cat_UDS = 1,
@@ -112,11 +107,42 @@ private:
 
     // Pause per tab (UDS / J1939 / XCP / OBD2), like the Monitor tab's Pause
     bool _paused[Cat_Count] = {};
-    QToolButton *_pauseButton = nullptr;
-    QLabel *_pauseLabel = nullptr;
     QTimer _pauseLabelTimer;
     void setTabPaused(int tab, bool paused);
     void updatePauseLabel();
+
+    // The protocol tabs share one TraceToolbar (GUI_DESIGN.md 3.1); each tab keeps
+    // its own state and filter (T-12), shown when the tab comes to the front
+    struct TabFilter
+    {
+        bool showTx = true;
+        bool showRx = true;
+        QSet<uint32_t> hiddenMessageIds;
+        QSet<uint8_t> hiddenLinFrameIds;
+        QSet<BusInterfaceId> hiddenInterfaces;
+    };
+    TraceToolbar *_toolbar = nullptr;
+    QToolButton *_xcpButton = nullptr;
+    TraceToolbar::State _tabState[Cat_Count];
+    TabFilter _tabFilter[Cat_Count];
+    // Time column until the Timestamp column exists: 0 = Δt / Abs time, 1 = time of day, 2 = UTC
+    int _timeOfDay[Cat_Count] = {};
+
+    [[nodiscard]] QTreeView *tree(int tab) const;
+    [[nodiscard]] int currentProtocolTab() const;     // -1 on the Monitor tab
+    void setTabMode(int tab, mode_t mode);
+    void setLegacyTimestampMode(int tab, int mode);
+    [[nodiscard]] int legacyTimestampMode(int tab) const;
+    [[nodiscard]] QString absTimeToolTip(int tab) const;
+    void applyTabTime(int tab);
+    void applyTabFilter(int tab);
+    void applyFindFilter(int tab);
+    void applyExpand(int tab);
+    [[nodiscard]] int filterCount(int tab) const;
+    [[nodiscard]] QList<QModelIndex> findMatches(int tab) const;
+    void findInTab(bool forward);
+    void updateFindPosition();
+    void fillMoreMenu(QMenu *menu);
 
     TraceFilterModel * _filterModels[Cat_Count];
     UnifiedTraceViewModel *_viewModels[Cat_Count];
@@ -127,14 +153,6 @@ private:
     QSortFilterProxyModel *_aggregatedProxyModel;
     TraceFilterModel * _aggMonitorFilterModel;
 
-    bool _filterShowTx = true;
-    bool _filterShowRx = true;
-    QSet<uint32_t> _filterHiddenMessageIds;
-    QSet<uint8_t>  _filterHiddenLinFrameIds;
-    QSet<BusInterfaceId> _filterHiddenInterfaces;
-
-    void applyDialogFilters();
-    void applyIcons();
     void openXcpSessions();
     void updateXcpStatus();
     // XCP IDs in the workspace; the interface is kept by USB device path and name

@@ -50,6 +50,7 @@ shared config; `tests/support/LogStub.cpp` satisfies `core/Log` without `Backend
 | `candle_error_frame/` | gs_usb / Candlelight 2.5 error frames to `BusError` flags, legacy and ElmueSoft (from `linux/can/error.h` + Elmue firmware) |
 | `xcp_decoder/`        | XCP on CAN: CTO commands/responses, byte order from CONNECT, DAQ/ODT from ALLOC_DAQ/ALLOC_ODT and DAQ_KEY_BYTE, XCP before UDS in `ProtocolManager` (packet layouts from ASAM MCD-1 XCP Part 2); A2L `XCP_ON_CAN` IDs (ASAM MCD-2 MC syntax) |
 | `obd_decoder/`        | OBD-II on CAN: SAE J1979 service 01/02 PID values, DTCs, VIN over ISO-TP, OBD IDs vs UDS on the same IDs (values worked out from the J1979 formulas) |
+| `trace_find/`         | Trace tab toolbar rules: Find matching (case, Data without spaces), result wrap and "3 / 12", Filter count, Scroll state from older workspaces (rules T-8, T-9, T-12, V-1 of the umbrella repo's GUI_DESIGN.md) |
 | `remote_frame_log/`   | Remote frame ring buffer: sequence numbers across evictions, `read` from a cursor, newest-N `readLatest` with filters (remote API contract) |
 | `candle_adapters/`    | Candle adapter table: device numbers per USB serial (table first, then serial order, reserved numbers kept), 16-digit chip-ID key, JSON save/load |
 | `candle_timing/`      | Computed 160 MHz nominal timings (75/80/85/87.5 % for 10k..1M): exact sample point, bitrate within 1 bit/s, FDCAN NBTP limits, BRP 2 first, existing table rows kept |

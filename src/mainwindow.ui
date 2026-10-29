@@ -331,10 +331,13 @@
   </action>
   <action name="action_TraceClear">
    <property name="text">
-    <string>&amp;Clear</string>
+    <string>Clear &amp;trace</string>
+   </property>
+   <property name="toolTip">
+    <string>Clear the whole trace: the Monitor tab and every protocol tab start empty</string>
    </property>
    <property name="shortcut">
-    <string>Esc</string>
+    <string>Ctrl+Shift+Del</string>
    </property>
   </action>
   <action name="actionCan_Status_View">

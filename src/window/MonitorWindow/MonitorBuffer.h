@@ -27,6 +27,7 @@
 #include <QSet>
 #include <QObject>
 #include <QTimer>
+#include <QVector>
 
 #include "core/BusMessage.h"
 
@@ -180,6 +181,18 @@ public:
     // Index of the next entry (after `from`, wrapping) whose column text contains `text`, or -1
     [[nodiscard]] int find(int column, const QString &text, int from, bool forward) const;
 
+    // Find (GUI_DESIGN.md T-8): ID, Description, Data (spaces ignored), Info (memo) or a signal line
+    [[nodiscard]] bool entryMatches(const Entry &entry, const QString &text) const;
+    // Indices of the matching entries in view order
+    [[nodiscard]] QVector<int> findAll(const QString &text) const;
+    // True when only the signal lines match, so the entry must be opened to show the match
+    [[nodiscard]] bool matchesOnlyInSignals(const Entry &entry, const QString &text) const;
+    // Only matches (T-11): takes only the frames that match `text`; empty = all frames
+    void setMatchText(const QString &text);
+    [[nodiscard]] const QString &matchText() const { return _matchText; }
+    // Frames recorded while paused and not shown yet
+    [[nodiscard]] int pendingFrames() const;
+
     [[nodiscard]] static int dataLineCount(const BusMessage &msg) noexcept;
 
     // What changed since the last call: returns true when lines were added, removed
@@ -222,6 +235,8 @@ private:
     bool _absoluteTime = false;
     bool _expandNew = true;
     int _lastProcessed = -1;
+    int _firstIndex = 0;                     // first trace index after Erase
+    QString _matchText;
     uint64_t _seq = 0;
     int64_t _lastEntryUs = 0;
 
@@ -238,5 +253,6 @@ private:
     [[nodiscard]] bool sortsBefore(const Entry &a, const Entry &b) const;
     [[nodiscard]] static QString memoKey(const BusMessage &msg);
     [[nodiscard]] int signalCount(const BusMessage &msg) const;
+    [[nodiscard]] bool frameMatches(const BusMessage &msg) const;   // Only matches
     [[nodiscard]] QString interfaceName(BusInterfaceId id) const;
 };

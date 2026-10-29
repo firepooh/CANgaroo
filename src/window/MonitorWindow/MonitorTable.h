@@ -49,6 +49,18 @@ public:
     void applyDefaultColumnWidths();
     // Selects the next entry whose column contains text; returns false when there is none
     bool find(int column, const QString &text, bool forward);
+    // Selects and centres a Find result; opens it when only its signal lines match (T-10)
+    void showFindResult(int entryIndex, bool open);
+    // Entry index of the selected row, or -1
+    [[nodiscard]] int selectedEntry() const;
+
+    // Follow (T-13, T-14): new rows scroll into view. Scrolling up or picking a row
+    // turns it off, scrolling to the bottom turns it on again.
+    [[nodiscard]] bool follow() const { return _follow; }
+    void setFollow(bool on);
+
+signals:
+    void followChanged(bool on);   // only when the user's scrolling or picking changed it
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -71,6 +83,8 @@ private:
     int _monoCharWidth = 8;
     int _rowHeight = 20;
     bool _hasSelection = false;
+    bool _follow = true;
+    int _followedEntries = 0;   // entry count at the last follow scroll
     uint64_t _selectedId = 0;
     QLineEdit *_editor = nullptr;
     uint64_t _editId = 0;
@@ -97,6 +111,8 @@ private:
     [[nodiscard]] int lineAt(int y) const;
     [[nodiscard]] int firstVisibleColumnX() const;
     void selectEntry(int entryIndex, bool center);
+    void followFromPosition();      // after the user scrolled
+    void setFollowByUser(bool on);
     void startMemoEdit(int entryIndex);
     void finishMemoEdit(bool commit);
 

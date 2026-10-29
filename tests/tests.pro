@@ -20,6 +20,7 @@ SUBDIRS += \
     candle_error_frame \
     xcp_decoder \
     obd_decoder \
+    trace_find \
     remote_frame_log \
     candle_adapters \
     candle_timing \

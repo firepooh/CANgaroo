@@ -26,19 +26,17 @@
 #include <algorithm>
 #include <iterator>
 
-#include <QCheckBox>
+#include <QActionGroup>
 #include <QDomDocument>
-#include <QLabel>
-#include <QSignalBlocker>
-#include <QToolButton>
+#include <QHBoxLayout>
 #include <QHeaderView>
+#include <QLabel>
+#include <QMenu>
 #include <QRegularExpression>
-#include <QScrollBar>
 #include <QSettings>
 #include <QSortFilterProxyModel>
-#include <QHBoxLayout>
+#include <QToolButton>
 #include <QVBoxLayout>
-#include <QPushButton>
 
 #include "core/Backend.h"
 #include "core/BusTrace.h"
@@ -55,6 +53,7 @@
 #include "UnifiedTraceViewModel.h"
 #include "XcpSessionDialog.h"
 #include "decoders/XcpSessions.h"
+#include "window/MonitorWindow/TraceFind.h"
 
 
 TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
@@ -64,10 +63,6 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
     _timestampMode(timestamp_mode_absolute)
 {
     ui->setupUi(this);
-
-    applyIcons();
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
-            this, [this](ThemeManager::Theme) { applyIcons(); });
 
     _aggregatedTraceViewModel = new AggregatedTraceViewModel(backend);
     _aggregatedProxyModel = new QSortFilterProxyModel(this);
@@ -122,7 +117,7 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
 
     // Per-tab default modes
     _tabModes[Cat_Aggregated] = mode_aggregated;
-    _tabModes[Cat_UDS]        = mode_unified;
+    _tabModes[Cat_UDS]        = mode_aggregated;   // V-1: Scroll off on every tab
     _tabModes[Cat_J1939]      = mode_aggregated;
     _tabModes[Cat_XCP]        = mode_aggregated;
     _tabModes[Cat_OBD]        = mode_aggregated;
@@ -146,45 +141,30 @@ TraceWindow::TraceWindow(QWidget *parent, Backend &backend) :
     makeAltModel(Cat_XCP,    UnifiedTraceViewModel::Cat_XCP,    false);  // XCP rolling (command sequence)
     makeAltModel(Cat_OBD,    UnifiedTraceViewModel::Cat_OBD,    false);  // OBD2 rolling (request / response order)
 
-    connect(ui->xcpSessionsButton, &QPushButton::clicked, this, &TraceWindow::openXcpSessions);
     connect(&XcpSessions::instance(), &XcpSessions::changed, this, &TraceWindow::updateXcpStatus);
-    updateXcpStatus();
 
-    connect(ui->tabs, &QTabWidget::currentChanged, this, &TraceWindow::on_tabs_currentChanged);
-    ui->xcpSessionsButton->setVisible(ui->tabs->currentIndex() == Cat_XCP);
-    ui->xcpStatusLabel->setVisible(ui->tabs->currentIndex() == Cat_XCP);
-
-    ui->cbViewMode->addItem(tr("Aggregated"), mode_aggregated);
-    ui->cbViewMode->addItem(tr("Rolling Log"), mode_unified);
-
-    ui->cbTimestampMode->addItem(tr("Absolute"), timestamp_mode_absolute);
-    ui->cbTimestampMode->addItem(tr("Absolute (UTC)"), timestamp_mode_absolute_utc);
-    ui->cbTimestampMode->addItem(tr("Relative"), timestamp_mode_relative);
-    ui->cbTimestampMode->addItem(tr("Delta"), timestamp_mode_delta);
-
+    // Settings dialog defaults. The Monitor tab's hidden tree keeps its view mode
+    // setting; the protocol tabs start with Scroll off (V-1) and the default time.
     QSettings appSettings;
-    const auto defaultTsMode = static_cast<timestamp_mode_t>(
-        appSettings.value("tracewindow/defaultTimestampMode", timestamp_mode_delta).toInt());
-    setTimestampMode(defaultTsMode);
-
     const auto defaultViewMode = static_cast<mode_t>(
         appSettings.value("tracewindow/defaultViewMode", mode_aggregated).toInt());
     _tabModes[Cat_Aggregated] = defaultViewMode;
+    const int defaultTsMode = appSettings.value("tracewindow/defaultTimestampMode", timestamp_mode_delta).toInt();
+    for (int tab = Cat_UDS; tab < Cat_Count; ++tab) {
+        setLegacyTimestampMode(tab, defaultTsMode);
+    }
 
-    // Debounce typing so the filter models are not re-evaluated on every keystroke
-    _filterDebounceTimer.setInterval(250);
-    _filterDebounceTimer.setSingleShot(true);
-    connect(&_filterDebounceTimer, &QTimer::timeout, this, &TraceWindow::on_cbFilterChanged);
-    connect(ui->filterLineEdit, &QLineEdit::textChanged, &_filterDebounceTimer, qOverload<>(&QTimer::start));
-    connect(ui->TraceClearpushButton, &QPushButton::released, this, &TraceWindow::on_cbTraceClearpushButton);
-    connect(ui->cbViewMode, &QComboBox::currentIndexChanged, this, &TraceWindow::on_cbViewMode_currentIndexChanged);
-    connect(ui->filterButton, &QPushButton::clicked, this, &TraceWindow::openFilterDialog);
+    buildToolbar();
+    updateXcpStatus();
 
     _scrollTimer.setInterval(100);
     _scrollTimer.setSingleShot(true);
     connect(&_scrollTimer, &QTimer::timeout, this, &TraceWindow::doScrollToBottom);
 
-    setMode(defaultViewMode);
+    for (int tab = Cat_Aggregated; tab < Cat_Count; ++tab) {
+        setTabMode(tab, _tabModes[tab]);
+        if (tab > Cat_Aggregated) { applyTabTime(tab); }
+    }
 }
 
 TraceWindow::~TraceWindow()
@@ -203,13 +183,141 @@ void TraceWindow::retranslateUi()
     ui->retranslateUi(this);
 }
 
+QTreeView *TraceWindow::tree(int tab) const
+{
+    QTreeView *trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp, ui->treeObd };
+    return trees[tab];
+}
+
+int TraceWindow::currentProtocolTab() const
+{
+    const int tab = ui->tabs->currentIndex();
+    return (tab > Cat_Aggregated && tab < Cat_Count) ? tab : -1;
+}
+
+void TraceWindow::buildToolbar()
+{
+    // The shared toolbar takes the place of the form's View / Time / Filter / Find /
+    // Clear / Autoscroll widgets. They stay in TraceWindow.ui, hidden, so the form
+    // keeps the upstream layout.
+    QHBoxLayout *bar = ui->horizontalLayout;
+    while (QLayoutItem *item = bar->takeAt(0)) {
+        if (item->widget()) { item->widget()->hide(); }
+        delete item;
+    }
+    for (QWidget *old : std::initializer_list<QWidget *>{ ui->label_3, ui->cbViewMode, ui->label, ui->cbTimestampMode,
+                                                          ui->filterButton, ui->label_2, ui->filterLineEdit,
+                                                          ui->TraceClearpushButton, ui->cbAutoscroll,
+                                                          ui->xcpSessionsButton, ui->line }) {
+        old->hide();
+    }
+    bar->setContentsMargins(0, 0, 0, 0);
+    _toolbar = new TraceToolbar(ui->widget);
+    bar->addWidget(_toolbar);
+
+    // XCP tab only: the XCP IDs button and the session status, in the tab slot
+    _xcpButton = new QToolButton(_toolbar);
+    _xcpButton->setText(tr("XCP IDs…"));
+    _xcpButton->setToolTip(tr("Request and response IDs of the XCP slave on each interface"));
+    _xcpButton->setProperty("iconName", "preferences-other");
+    _xcpButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    connect(_xcpButton, &QToolButton::clicked, this, &TraceWindow::openXcpSessions);
+    _toolbar->addToTabSlot(_xcpButton);
+    _toolbar->addToTabSlot(ui->xcpStatusLabel);
+
+    connect(_toolbar, &TraceToolbar::scrollToggled, this, [this](bool on)
+    {
+        const int tab = currentProtocolTab();
+        if (tab < 0) { return; }
+        _tabState[tab].scroll = on;
+        setTabMode(tab, on ? mode_unified : mode_aggregated);
+        emit settingsChanged(this);
+    });
+    connect(_toolbar, &TraceToolbar::expandToggled, this, [this](bool on)
+    {
+        const int tab = currentProtocolTab();
+        if (tab < 0) { return; }
+        _tabState[tab].expand = on;
+        applyExpand(tab);
+        emit settingsChanged(this);
+    });
+    connect(_toolbar, &TraceToolbar::absTimeToggled, this, [this](bool on)
+    {
+        const int tab = currentProtocolTab();
+        if (tab < 0) { return; }
+        _tabState[tab].absTime = on;
+        applyTabTime(tab);
+        emit settingsChanged(this);
+    });
+    connect(_toolbar, &TraceToolbar::pauseToggled, this, [this](bool on)
+    {
+        const int tab = currentProtocolTab();
+        if (tab >= 0) { setTabPaused(tab, on); }
+    });
+    connect(_toolbar, &TraceToolbar::eraseClicked, this, [this]()
+    {
+        const int tab = currentProtocolTab();
+        if (tab < 0) { return; }
+        for (UnifiedTraceViewModel *model : { _viewModels[tab], _altViewModels[tab] }) {
+            if (model) { model->erase(); }
+        }
+        applyExpand(tab);
+        updateFindPosition();
+    });
+    connect(_toolbar, &TraceToolbar::findTextChanged, this, [this](const QString &text)
+    {
+        const int tab = currentProtocolTab();
+        if (tab < 0) { return; }
+        _tabState[tab].findText = text;
+        applyFindFilter(tab);
+        updateFindPosition();
+        emit settingsChanged(this);
+    });
+    connect(_toolbar, &TraceToolbar::findNext, this, [this]() { findInTab(true); });
+    connect(_toolbar, &TraceToolbar::findPrevious, this, [this]() { findInTab(false); });
+    connect(_toolbar, &TraceToolbar::onlyMatchesToggled, this, [this](bool on)
+    {
+        const int tab = currentProtocolTab();
+        if (tab < 0) { return; }
+        _tabState[tab].onlyMatches = on;
+        applyFindFilter(tab);
+        emit settingsChanged(this);
+    });
+    connect(_toolbar, &TraceToolbar::filterClicked, this, &TraceWindow::openFilterDialog);
+    connect(_toolbar, &TraceToolbar::followToggled, this, [this](bool on)
+    {
+        const int tab = currentProtocolTab();
+        if (tab < 0) { return; }
+        _tabState[tab].follow = on;
+        if (on) { tree(tab)->scrollToBottom(); }
+        emit settingsChanged(this);
+    });
+    connect(_toolbar, &TraceToolbar::moreMenuAboutToShow, this, &TraceWindow::fillMoreMenu);
+
+    // T-14: the user's own scrolling and row picking switch Follow
+    for (int tab = Cat_UDS; tab < Cat_Count; ++tab) {
+        auto *watcher = new FollowWatcher(tree(tab));
+        connect(watcher, &FollowWatcher::followChanged, this, [this, tab](bool on)
+        {
+            if (_tabState[tab].follow == on) { return; }
+            _tabState[tab].follow = on;
+            if (ui->tabs->currentIndex() == tab) { _toolbar->setFollow(on); }
+        });
+    }
+
+    _pauseLabelTimer.setInterval(500);
+    connect(&_pauseLabelTimer, &QTimer::timeout, this, &TraceWindow::updatePauseLabel);
+}
+
 void TraceWindow::setMode(TraceWindow::mode_t mode)
 {
-    int tabIdx = ui->tabs->currentIndex();
-    _tabModes[tabIdx] = mode;
+    setTabMode(ui->tabs->currentIndex(), mode);
+}
 
-    QTreeView *trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp, ui->treeObd };
-    QTreeView *tree = trees[tabIdx];
+void TraceWindow::setTabMode(int tabIdx, TraceWindow::mode_t mode)
+{
+    _tabModes[tabIdx] = mode;
+    QTreeView *tree = this->tree(tabIdx);
 
     if (tabIdx == Cat_Aggregated) {
         if (mode == mode_aggregated) {
@@ -246,15 +354,12 @@ void TraceWindow::setMode(TraceWindow::mode_t mode)
             _altFilterModels[tabIdx]->sort(-1);
             tree->setModel(_altFilterModels[tabIdx]);
         }
+        applyExpand(tabIdx);
     }
 
-    for (int i = 0; i < ui->cbViewMode->count(); i++) {
-        if (ui->cbViewMode->itemData(i).toInt() == mode) {
-            ui->cbViewMode->setCurrentIndex(i);
-            break;
-        }
+    if (tabIdx == Cat_Aggregated || _tabState[tabIdx].follow) {
+        tree->scrollToBottom();
     }
-    tree->scrollToBottom();
 }
 
 void TraceWindow::setMonitorPage(QWidget *page)
@@ -269,74 +374,7 @@ void TraceWindow::setMonitorPage(QWidget *page)
         page->setContentsMargins(0, 0, 0, 0);
         page->setSpacing(0);
     }
-    applyMonitorToolbarLayout();
     placeToolbar(ui->tabs->currentIndex());
-}
-
-void TraceWindow::applyMonitorToolbarLayout()
-{
-    // Same order and names as the Monitor tab's toolbar:
-    // View, Time | Filter | Find | Clear | own items (Autoscroll, XCP IDs)
-    QHBoxLayout *bar = ui->horizontalLayout;
-    while (QLayoutItem *item = bar->takeAt(0)) {
-        delete item;    // only the layout item; the widgets stay
-    }
-    ui->line->hide();
-    bar->setContentsMargins(4, 4, 4, 2);
-    bar->setSpacing(6);
-
-    // Push buttons as narrow as the Monitor tab's tool buttons (Fusion makes them 80 px at least)
-    for (QPushButton *button : { ui->TraceClearpushButton, ui->filterButton, ui->xcpSessionsButton }) {
-        button->setMinimumHeight(0);
-        button->setIconSize(QSize(14, 14));
-        const int icon = button->icon().isNull() ? 0 : button->iconSize().width() + 4;
-        button->setFixedWidth(button->fontMetrics().horizontalAdvance(button->text()) + icon + 20);
-    }
-    ui->filterLineEdit->setMinimumHeight(0);
-    ui->filterLineEdit->setMaximumWidth(220);
-    ui->filterLineEdit->setClearButtonEnabled(true);
-    ui->label->setText(tr("Time:"));
-    // Same widths as the Monitor tab's View / Time combos (MonitorView)
-    ui->cbViewMode->setFixedWidth(fontMetrics().horizontalAdvance(QStringLiteral("Rolling Log")) + 48);
-    ui->cbTimestampMode->setFixedWidth(fontMetrics().horizontalAdvance(QStringLiteral("Absolute (UTC)")) + 48);
-    ui->label_2->setText(tr("Find:"));
-    ui->TraceClearpushButton->setToolTip(tr("Clear the whole trace: the Monitor and every other tab start empty"));
-
-    bar->addWidget(ui->label_3);
-    bar->addWidget(ui->cbViewMode);
-    bar->addWidget(ui->label);
-    bar->addWidget(ui->cbTimestampMode);
-    bar->addSpacing(16);
-    bar->addWidget(ui->filterButton);
-    bar->addSpacing(16);
-    bar->addWidget(ui->label_2);
-    bar->addWidget(ui->filterLineEdit);
-    bar->addSpacing(16);
-    bar->addWidget(ui->TraceClearpushButton);
-    bar->addSpacing(16);
-    bar->addWidget(ui->cbAutoscroll);
-
-    // Pause like the Monitor tab: per tab, frames keep being recorded
-    if (!_pauseButton) {
-        _pauseButton = new QToolButton(this);
-        _pauseButton->setText(tr("Pause"));
-        _pauseButton->setCheckable(true);
-        _pauseButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        _pauseButton->setToolTip(tr("Freeze this tab; frames are still recorded and shown when you resume"));
-        connect(_pauseButton, &QToolButton::toggled, this, [this](bool checked) {
-            setTabPaused(ui->tabs->currentIndex(), checked);
-        });
-        _pauseLabel = new QLabel(this);
-        _pauseLabel->hide();
-        _pauseLabelTimer.setInterval(500);
-        connect(&_pauseLabelTimer, &QTimer::timeout, this, &TraceWindow::updatePauseLabel);
-    }
-    bar->addWidget(_pauseButton);
-    bar->addWidget(_pauseLabel);
-    bar->addSpacing(16);
-    bar->addWidget(ui->xcpSessionsButton);
-    bar->addWidget(ui->xcpStatusLabel);
-    bar->addStretch(1);
 }
 
 void TraceWindow::placeToolbar(int tab)
@@ -361,6 +399,7 @@ void TraceWindow::setTabPaused(int tab, bool paused)
         return;     // the Monitor tab has its own Pause
     }
     _paused[tab] = paused;
+    _tabState[tab].paused = paused;
     for (UnifiedTraceViewModel *model : { _viewModels[tab], _altViewModels[tab] }) {
         if (model) {
             model->setPaused(paused);
@@ -376,82 +415,186 @@ void TraceWindow::setTabPaused(int tab, bool paused)
 
 void TraceWindow::updatePauseLabel()
 {
-    if (!_pauseLabel) {
-        return;
-    }
-    const int tab = ui->tabs->currentIndex();
-    if (tab <= Cat_Aggregated || tab >= Cat_Count || !_paused[tab] || !_viewModels[tab]) {
-        _pauseLabel->hide();
+    const int tab = currentProtocolTab();
+    if (tab < 0 || !_paused[tab] || !_viewModels[tab]) {
         return;
     }
     // The primary and alternative models of a tab pause together, so either one counts
-    QString text = tr("%L1 new").arg(_viewModels[tab]->pendingFrames());
-    const qint64 skipped = _viewModels[tab]->framesSkippedWhilePaused();
-    if (skipped > 0) {
-        text += tr(", %L1 dropped (trace full)").arg(skipped);
-    }
-    _pauseLabel->setText(text);
-    _pauseLabel->setToolTip(tr("Frames recorded since this tab was paused. The trace keeps a limited number "
-                               "of frames: frames it drops before you resume are not shown."));
-    _pauseLabel->show();
+    _toolbar->setPauseInfo(_viewModels[tab]->pendingFrames(), _viewModels[tab]->framesSkippedWhilePaused());
 }
 
 void TraceWindow::on_tabs_currentChanged(int index)
 {
-    if (_pauseButton) {
-        // One button for all tabs: show the state of the tab now in front
-        const QSignalBlocker block(_pauseButton);
-        _pauseButton->setChecked(index > Cat_Aggregated && index < Cat_Count && _paused[index]);
-        updatePauseLabel();
-    }
     placeToolbar(index);
-    // XCP IDs and the session status sit in the toolbar line, on the XCP tab only
-    ui->xcpSessionsButton->setVisible(index == Cat_XCP);
-    ui->xcpStatusLabel->setVisible(index == Cat_XCP);
-    int tabIdx = ui->tabs->currentIndex();
-    mode_t currentMode = _tabModes[tabIdx];
-    for (int i = 0; i < ui->cbViewMode->count(); i++) {
-        if (ui->cbViewMode->itemData(i).toInt() == currentMode) {
-            ui->cbViewMode->setCurrentIndex(i);
-            break;
-        }
+    if (index <= Cat_Aggregated || index >= Cat_Count) {
+        return;
     }
+    // One toolbar for the protocol tabs: show the state of the tab now in front
+    _toolbar->setState(_tabState[index]);
+    _toolbar->setFilterCount(filterCount(index));
+    _toolbar->setAbsTimeEnabled(_timeOfDay[index] == 0, absTimeToolTip(index));
+    updatePauseLabel();
+    // XCP IDs and the session status are the XCP tab's own
+    _toolbar->setTabSlotVisible(index == Cat_XCP);
+    updateFindPosition();
 }
 
-
-void TraceWindow::setTimestampMode(int mode)
+void TraceWindow::setLegacyTimestampMode(int tab, int mode)
 {
-    timestamp_mode_t new_mode;
-    if ( (mode>=0) && (mode<timestamp_modes_count) )
-    {
-        new_mode = (timestamp_mode_t) mode;
-    }
-    else
-    {
-        new_mode = timestamp_mode_absolute;
-    }
+    // One Time box for all tabs before the shared toolbar: Delta, Relative, or a time of day
+    _tabState[tab].absTime = mode == timestamp_mode_relative;
+    _timeOfDay[tab] = mode == timestamp_mode_absolute ? 1 : mode == timestamp_mode_absolute_utc ? 2 : 0;
+}
 
-    _aggregatedTraceViewModel->setTimestampMode(new_mode);
-    for (int i = 0; i < Cat_Count; ++i)
-    {
-        _viewModels[i]->setTimestampMode(new_mode);
-        if (_altViewModels[i])
-            _altViewModels[i]->setTimestampMode(new_mode);
-    }
+int TraceWindow::legacyTimestampMode(int tab) const
+{
+    if (_timeOfDay[tab] == 1) { return timestamp_mode_absolute; }
+    if (_timeOfDay[tab] == 2) { return timestamp_mode_absolute_utc; }
+    return _tabState[tab].absTime ? timestamp_mode_relative : timestamp_mode_delta;
+}
 
-    if (new_mode != _timestampMode)
-    {
-        _timestampMode = new_mode;
-        for (int i=0; i<ui->cbTimestampMode->count(); i++)
-        {
-            if (ui->cbTimestampMode->itemData(i).toInt() == new_mode)
-            {
-                ui->cbTimestampMode->setCurrentIndex(i);
-            }
-        }
-        emit(settingsChanged(this));
+QString TraceWindow::absTimeToolTip(int tab) const
+{
+    return _timeOfDay[tab] == 0 ? QString()
+        : tr("The Time column shows the time of day. Change it in the ⋯ menu, Time column");
+}
+
+void TraceWindow::applyTabTime(int tab)
+{
+    const auto mode = static_cast<timestamp_mode_t>(legacyTimestampMode(tab));
+    for (UnifiedTraceViewModel *model : { _viewModels[tab], _altViewModels[tab] }) {
+        if (model) { model->setTimestampMode(mode); }
+    }
+    tree(tab)->viewport()->update();
+    if (ui->tabs->currentIndex() == tab) {
+        _toolbar->setAbsTimeEnabled(_timeOfDay[tab] == 0, absTimeToolTip(tab));
     }
 }
+
+void TraceWindow::applyExpand(int tab)
+{
+    if (_tabState[tab].expand) {
+        tree(tab)->expandAll();
+    } else {
+        tree(tab)->collapseAll();
+    }
+}
+
+void TraceWindow::applyFindFilter(int tab)
+{
+    // Only matches hides rows; Find alone only moves to them (T-11)
+    const QString text = _tabState[tab].onlyMatches ? _tabState[tab].findText : QString();
+    for (TraceFilterModel *model : { _filterModels[tab], _altFilterModels[tab] }) {
+        if (model) {
+            model->setFilterText(text);
+            model->invalidate();
+        }
+    }
+    applyExpand(tab);
+}
+
+QList<QModelIndex> TraceWindow::findMatches(int tab) const
+{
+    // Every matching line in view order: a row, then its decoded and frame lines (T-8)
+    QList<QModelIndex> matches;
+    const QString text = _tabState[tab].findText;
+    QAbstractItemModel *model = tree(tab)->model();
+    if (text.isEmpty() || !model) { return matches; }
+    for (int row = 0; row < model->rowCount(); ++row) {
+        const QModelIndex index = model->index(row, 0);
+        if (TraceFilterModel::lineMatches(index, text)) { matches.append(index); }
+        for (int child = 0; child < model->rowCount(index); ++child) {
+            const QModelIndex childIndex = model->index(child, 0, index);
+            if (TraceFilterModel::lineMatches(childIndex, text)) { matches.append(childIndex); }
+        }
+    }
+    return matches;
+}
+
+void TraceWindow::findInTab(bool forward)
+{
+    const int tab = currentProtocolTab();
+    if (tab < 0) { return; }
+    QTreeView *view = tree(tab);
+    const QList<QModelIndex> matches = findMatches(tab);
+    const QModelIndex current = view->currentIndex();
+    const int at = current.isValid() ? static_cast<int>(matches.indexOf(current.siblingAtColumn(0))) : -1;
+    const int next = TraceFind::step(at, static_cast<int>(matches.size()), forward);
+    if (next >= 0) {
+        const QModelIndex target = matches[next];
+        // T-10: a match in a closed row opens it and picks the matching line
+        if (target.parent().isValid()) { view->expand(target.parent()); }
+        _tabState[tab].follow = false;
+        _toolbar->setFollow(false);
+        view->setCurrentIndex(target);
+        view->scrollTo(target, QAbstractItemView::PositionAtCenter);
+    }
+    _toolbar->setFindPosition(next, static_cast<int>(matches.size()));
+}
+
+void TraceWindow::updateFindPosition()
+{
+    const int tab = currentProtocolTab();
+    if (tab < 0) { return; }
+    if (_tabState[tab].findText.isEmpty()) {
+        _toolbar->setFindPosition(-1, -1);
+        return;
+    }
+    const QList<QModelIndex> matches = findMatches(tab);
+    const QModelIndex current = tree(tab)->currentIndex();
+    _toolbar->setFindPosition(current.isValid() ? static_cast<int>(matches.indexOf(current.siblingAtColumn(0))) : -1,
+                              static_cast<int>(matches.size()));
+}
+
+void TraceWindow::fillMoreMenu(QMenu *menu)
+{
+    const int tab = currentProtocolTab();
+    if (tab < 0) { return; }
+
+    // Until the Timestamp column (GUI_DESIGN.md step 3) the time of day is shown in the
+    // Time column, as the former Time box's Absolute and Absolute (UTC) did
+    QMenu *time = menu->addMenu(tr("Time column"));
+    auto *group = new QActionGroup(time);
+    const QString names[] = { tr("Δt, or since start with Abs time"), tr("Time of day"), tr("Time of day (UTC)") };
+    for (int choice = 0; choice < 3; ++choice) {
+        QAction *action = time->addAction(names[choice]);
+        action->setCheckable(true);
+        action->setChecked(_timeOfDay[tab] == choice);
+        group->addAction(action);
+        connect(action, &QAction::triggered, this, [this, tab, choice]()
+        {
+            _timeOfDay[tab] = choice;
+            applyTabTime(tab);
+            emit settingsChanged(this);
+        });
+    }
+
+    QHeaderView *header = tree(tab)->header();
+    QAbstractItemModel *model = tree(tab)->model();
+    QMenu *columns = menu->addMenu(tr("Columns"));
+    for (int col = 0; model && col < model->columnCount(); ++col) {
+        QAction *action = columns->addAction(model->headerData(col, Qt::Horizontal).toString());
+        action->setCheckable(true);
+        action->setChecked(!header->isSectionHidden(col));
+        connect(action, &QAction::toggled, this, [header, col](bool on) { header->setSectionHidden(col, !on); });
+    }
+}
+
+int TraceWindow::filterCount(int tab) const
+{
+    const TabFilter &f = _tabFilter[tab];
+    return TraceFind::filterCount(f.showTx, f.showRx, static_cast<int>(f.hiddenMessageIds.size()),
+                                  static_cast<int>(f.hiddenLinFrameIds.size()),
+                                  static_cast<int>(f.hiddenInterfaces.size()));
+}
+
+namespace
+{
+
+// Tab names in the workspace (TabView and TraceFilter tab="...")
+const char *const k_tabNames[] = { "monitor", "uds", "j1939", "xcp", "obd2" };
+
+} // namespace
 
 bool TraceWindow::saveXML(Backend &backend, QDomDocument &xml, QDomElement &root)
 {
@@ -461,53 +604,48 @@ bool TraceWindow::saveXML(Backend &backend, QDomDocument &xml, QDomElement &root
     }
 
     root.setAttribute("type", "TraceWindow");
+    // mode* and TimestampMode as before the shared toolbar, so older builds still read the views
     root.setAttribute("mode", _tabModes[Cat_Aggregated] == mode_unified ? "unified" : "aggregated");
-    root.setAttribute("modeUds", _tabModes[Cat_UDS] == mode_aggregated ? "aggregated" : "unified");
-    root.setAttribute("modeJ1939", _tabModes[Cat_J1939] == mode_unified ? "unified" : "aggregated");
-    root.setAttribute("modeXcp", _tabModes[Cat_XCP] == mode_unified ? "unified" : "aggregated");
-    root.setAttribute("modeObd", _tabModes[Cat_OBD] == mode_unified ? "unified" : "aggregated");
-    root.setAttribute("TimestampMode", _timestampMode);
+    root.setAttribute("modeUds", _tabState[Cat_UDS].scroll ? "unified" : "aggregated");
+    root.setAttribute("modeJ1939", _tabState[Cat_J1939].scroll ? "unified" : "aggregated");
+    root.setAttribute("modeXcp", _tabState[Cat_XCP].scroll ? "unified" : "aggregated");
+    root.setAttribute("modeObd", _tabState[Cat_OBD].scroll ? "unified" : "aggregated");
+    root.setAttribute("TimestampMode", legacyTimestampMode(Cat_UDS));
     root.setAttribute("ActiveTab", ui->tabs->currentIndex());
 
     QDomElement elAggregated = xml.createElement("AggregatedTraceView");
     elAggregated.setAttribute("SortColumn", _aggregatedProxyModel->sortColumn());
     root.appendChild(elAggregated);
 
-    QDomElement filterEl = xml.createElement("TraceFilter");
-    filterEl.setAttribute("showTx", _filterShowTx ? "1" : "0");
-    filterEl.setAttribute("showRx", _filterShowRx ? "1" : "0");
-
-    QStringList hiddenMsgs;
-    for (uint32_t id : _filterHiddenMessageIds)
+    for (int tab = Cat_UDS; tab < Cat_Count; ++tab)
     {
-        hiddenMsgs.append(QString::number(id));
-    }
-    if (!hiddenMsgs.isEmpty())
-    {
-        filterEl.setAttribute("hiddenMessages", hiddenMsgs.join(","));
+        QDomElement tabEl = xml.createElement("TabView");
+        tabEl.setAttribute("tab", k_tabNames[tab]);
+        _tabState[tab].save(tabEl);
+        tabEl.setAttribute("timeOfDay", _timeOfDay[tab]);
+        root.appendChild(tabEl);
     }
 
-    QStringList hiddenLinFrames;
-    for (uint8_t id : _filterHiddenLinFrameIds)
+    // T-12: one filter per tab
+    for (int tab = Cat_UDS; tab < Cat_Count; ++tab)
     {
-        hiddenLinFrames.append(QString::number(id));
+        const TabFilter &f = _tabFilter[tab];
+        QDomElement filterEl = xml.createElement("TraceFilter");
+        filterEl.setAttribute("tab", k_tabNames[tab]);
+        filterEl.setAttribute("showTx", f.showTx ? "1" : "0");
+        filterEl.setAttribute("showRx", f.showRx ? "1" : "0");
+        auto join = [](const auto &set)
+        {
+            QStringList list;
+            for (auto v : set) { list.append(QString::number(v)); }
+            list.sort();
+            return list.join(',');
+        };
+        if (!f.hiddenMessageIds.isEmpty()) { filterEl.setAttribute("hiddenMessages", join(f.hiddenMessageIds)); }
+        if (!f.hiddenLinFrameIds.isEmpty()) { filterEl.setAttribute("hiddenLinFrames", join(f.hiddenLinFrameIds)); }
+        if (!f.hiddenInterfaces.isEmpty()) { filterEl.setAttribute("hiddenInterfaces", join(f.hiddenInterfaces)); }
+        root.appendChild(filterEl);
     }
-    if (!hiddenLinFrames.isEmpty())
-    {
-        filterEl.setAttribute("hiddenLinFrames", hiddenLinFrames.join(","));
-    }
-
-    QStringList hiddenIfs;
-    for (BusInterfaceId id : _filterHiddenInterfaces)
-    {
-        hiddenIfs.append(QString::number(id));
-    }
-    if (!hiddenIfs.isEmpty())
-    {
-        filterEl.setAttribute("hiddenInterfaces", hiddenIfs.join(","));
-    }
-
-    root.appendChild(filterEl);
 
     saveXcpSessions(xml, root);
 
@@ -594,54 +732,70 @@ bool TraceWindow::loadXML(Backend &backend, QDomElement &el)
 
     QString modeStr = el.attribute("mode", "aggregated");
     _tabModes[Cat_Aggregated] = (modeStr == "unified") ? mode_unified : mode_aggregated;
-    _tabModes[Cat_UDS]  = (el.attribute("modeUds",   "unified")    == "aggregated") ? mode_aggregated : mode_unified;
-    _tabModes[Cat_J1939]= (el.attribute("modeJ1939", "aggregated") == "unified")    ? mode_unified    : mode_aggregated;
-    _tabModes[Cat_XCP]  = (el.attribute("modeXcp",   "aggregated") == "unified")    ? mode_unified    : mode_aggregated;
-    _tabModes[Cat_OBD]  = (el.attribute("modeObd",   "aggregated") == "unified")    ? mode_unified    : mode_aggregated;
-    // Apply mode for Monitor tab (the tab that is currently visible after loading)
-    setMode(_tabModes[ui->tabs->currentIndex()]);
-    setTimestampMode(el.attribute("TimestampMode", "0").toInt());
+
+    // Workspaces before the shared toolbar: mode* per tab, one TimestampMode and one
+    // filter for all protocol tabs. TabView and TraceFilter tab="..." override them.
+    const char *const modeAttr[] = { nullptr, "modeUds", "modeJ1939", "modeXcp", "modeObd" };
+    const int legacyTs = el.attribute("TimestampMode", QString::number(timestamp_mode_delta)).toInt();
+    for (int tab = Cat_UDS; tab < Cat_Count; ++tab)
+    {
+        _tabState[tab] = TraceToolbar::State();
+        _tabState[tab].scroll = TraceFind::scrollFromLegacyMode(el.attribute(modeAttr[tab], "aggregated"));
+        setLegacyTimestampMode(tab, legacyTs);
+        _tabFilter[tab] = TabFilter();
+    }
+    auto tabOf = [](const QString &name)
+    {
+        for (int tab = Cat_UDS; tab < Cat_Count; ++tab) { if (name == k_tabNames[tab]) { return tab; } }
+        return -1;
+    };
+    for (QDomElement e = el.firstChildElement("TabView"); !e.isNull(); e = e.nextSiblingElement("TabView"))
+    {
+        const int tab = tabOf(e.attribute("tab"));
+        if (tab < 0) { continue; }
+        _tabState[tab].load(e);
+        _timeOfDay[tab] = std::clamp(e.attribute("timeOfDay", "0").toInt(), 0, 2);
+    }
+    for (QDomElement e = el.firstChildElement("TraceFilter"); !e.isNull(); e = e.nextSiblingElement("TraceFilter"))
+    {
+        TabFilter f;
+        f.showTx = e.attribute("showTx", "1") == "1";
+        f.showRx = e.attribute("showRx", "1") == "1";
+        for (const QString &s : e.attribute("hiddenMessages").split(',', Qt::SkipEmptyParts)) {
+            f.hiddenMessageIds.insert(s.toUInt());
+        }
+        for (const QString &s : e.attribute("hiddenLinFrames").split(',', Qt::SkipEmptyParts)) {
+            f.hiddenLinFrameIds.insert(static_cast<uint8_t>(s.toUInt()));
+        }
+        for (const QString &s : e.attribute("hiddenInterfaces").split(',', Qt::SkipEmptyParts)) {
+            f.hiddenInterfaces.insert(static_cast<BusInterfaceId>(s.toUInt()));
+        }
+        const int tab = tabOf(e.attribute("tab"));
+        if (tab >= 0) {
+            _tabFilter[tab] = f;
+        } else {
+            for (int t = Cat_UDS; t < Cat_Count; ++t) { _tabFilter[t] = f; }   // older workspace: all tabs
+        }
+    }
+
+    for (int tab = Cat_Aggregated; tab < Cat_Count; ++tab)
+    {
+        if (tab > Cat_Aggregated)
+        {
+            _tabModes[tab] = _tabState[tab].scroll ? mode_unified : mode_aggregated;
+            setTabPaused(tab, false);
+            applyTabFilter(tab);
+            applyFindFilter(tab);
+            applyTabTime(tab);
+        }
+        setTabMode(tab, _tabModes[tab]);
+    }
     ui->tabs->setCurrentIndex(el.attribute("ActiveTab", "0").toInt());
+    on_tabs_currentChanged(ui->tabs->currentIndex());
 
     QDomElement elAggregated = el.firstChildElement("AggregatedTraceView");
     int sortColumn = elAggregated.attribute("SortColumn", "-1").toInt();
     ui->treeAgg->sortByColumn(sortColumn, Qt::AscendingOrder);
-
-    QDomElement filterEl = el.firstChildElement("TraceFilter");
-    if (!filterEl.isNull())
-    {
-        _filterShowTx = filterEl.attribute("showTx", "1") == "1";
-        _filterShowRx = filterEl.attribute("showRx", "1") == "1";
-
-        QString hiddenMsgsStr = filterEl.attribute("hiddenMessages");
-        if (!hiddenMsgsStr.isEmpty())
-        {
-            for (const QString &s : hiddenMsgsStr.split(","))
-            {
-                _filterHiddenMessageIds.insert(s.toUInt());
-            }
-        }
-
-        QString hiddenLinStr = filterEl.attribute("hiddenLinFrames");
-        if (!hiddenLinStr.isEmpty())
-        {
-            for (const QString &s : hiddenLinStr.split(","))
-            {
-                _filterHiddenLinFrameIds.insert(static_cast<uint8_t>(s.toUInt()));
-            }
-        }
-
-        QString hiddenIfsStr = filterEl.attribute("hiddenInterfaces");
-        if (!hiddenIfsStr.isEmpty())
-        {
-            for (const QString &s : hiddenIfsStr.split(","))
-            {
-                _filterHiddenInterfaces.insert(static_cast<BusInterfaceId>(s.toUInt()));
-            }
-        }
-
-        applyDialogFilters();
-    }
 
     loadXcpSessions(el);
 
@@ -655,25 +809,25 @@ void TraceWindow::addMessage(const BusMessage &msg)
 
 void TraceWindow::onRowsInserted(const QModelIndex &parent, int first, int last)
 {
-    (void) parent;
-    (void) first;
-    (void) last;
-
-    if (!ui->cbAutoscroll->isChecked()) { return; }
-
     TraceFilterModel *filterModel = qobject_cast<TraceFilterModel*>(sender());
 
     // Only the model a tab shows scrolls it. Each tab keeps its other view mode
     // (rolling or aggregated) up to date too, and rows arriving there must not pull
     // the shown view to the bottom: a rolling log behind an aggregated view gets a
     // row per frame, which made the aggregated view impossible to scroll.
-    QTreeView* trees[] = { ui->treeAgg, ui->treeUds, ui->treeJ1939, ui->treeXcp, ui->treeObd };
     for (int i = 0; i < Cat_Count; ++i) {
-        if (filterModel && trees[i]->model() == filterModel)
-        {
-            _scrollPending[i] = true;
-            break;
+        if (!filterModel || tree(i)->model() != filterModel) {
+            continue;
         }
+        // Expand: new rows open like the others
+        if (i > Cat_Aggregated && _tabState[i].expand && !parent.isValid()) {
+            for (int row = first; row <= last; ++row) { tree(i)->expand(filterModel->index(row, 0)); }
+        }
+        // Follow (T-13)
+        if (i == Cat_Aggregated || _tabState[i].follow) {
+            _scrollPending[i] = true;
+        }
+        break;
     }
 
     if (!_scrollTimer.isActive()) {
@@ -697,43 +851,6 @@ void TraceWindow::doScrollToBottom()
     }
 }
 
-void TraceWindow::on_cbTimestampMode_currentIndexChanged(int index)
-{
-    setTimestampMode((timestamp_mode_t)ui->cbTimestampMode->itemData(index).toInt());
-}
-
-void TraceWindow::on_cbFilterChanged()
-{
-    QString filterText = ui->filterLineEdit->text();
-    _aggMonitorFilterModel->setFilterText(filterText);
-    _aggMonitorFilterModel->invalidate();
-
-    for (int i = 0; i < Cat_Count; ++i) {
-        _filterModels[i]->setFilterText(filterText);
-        _filterModels[i]->invalidate();
-    }
-}
-
-void TraceWindow::on_cbTraceClearpushButton()
-{
-    _backend->clearTrace();
-}
-
-void TraceWindow::on_cbViewMode_currentIndexChanged(int index)
-{
-    setMode((mode_t)ui->cbViewMode->itemData(index).toInt());
-}
-
-void TraceWindow::applyIcons()
-{
-    // The bundled SVGs draw with stroke="currentColor", which QSvgRenderer does
-    // not resolve — it paints them black, so they vanish against a dark theme.
-    // Recolor them to the palette's text color instead of using the SVG as-is.
-    ui->filterButton->setIcon(AppHelpers::themedIcon("view-filter", ":/assets/filter-symbolic.svg"));
-    ui->TraceClearpushButton->setIcon(AppHelpers::themedIcon("user-trash-full",
-                                                            ":/assets/icons/edit-clear-symbolic.svg"));
-}
-
 void TraceWindow::openXcpSessions()
 {
     XcpSessionDialog dialog(*_backend, this);
@@ -752,44 +869,46 @@ void TraceWindow::updateXcpStatus()
 
 void TraceWindow::openFilterDialog()
 {
+    // T-12: the filter of the tab in front only
+    const int tab = currentProtocolTab();
+    if (tab < 0) { return; }
+    TabFilter &f = _tabFilter[tab];
     TraceFilterDialog dlg(*_backend, this);
-    dlg.setShowTx(_filterShowTx);
-    dlg.setShowRx(_filterShowRx);
-    dlg.setHiddenMessageIds(_filterHiddenMessageIds);
-    dlg.setHiddenLinFrameIds(_filterHiddenLinFrameIds);
-    dlg.setHiddenInterfaces(_filterHiddenInterfaces);
+    dlg.setShowTx(f.showTx);
+    dlg.setShowRx(f.showRx);
+    dlg.setHiddenMessageIds(f.hiddenMessageIds);
+    dlg.setHiddenLinFrameIds(f.hiddenLinFrameIds);
+    dlg.setHiddenInterfaces(f.hiddenInterfaces);
 
     if (dlg.exec() == QDialog::Accepted)
     {
-        _filterShowTx = dlg.showTx();
-        _filterShowRx = dlg.showRx();
-        _filterHiddenMessageIds = dlg.hiddenMessageIds();
-        _filterHiddenLinFrameIds = dlg.hiddenLinFrameIds();
-        _filterHiddenInterfaces = dlg.hiddenInterfaces();
+        f.showTx = dlg.showTx();
+        f.showRx = dlg.showRx();
+        f.hiddenMessageIds = dlg.hiddenMessageIds();
+        f.hiddenLinFrameIds = dlg.hiddenLinFrameIds();
+        f.hiddenInterfaces = dlg.hiddenInterfaces();
 
-        applyDialogFilters();
+        applyTabFilter(tab);
+        _toolbar->setFilterCount(filterCount(tab));
         emit settingsChanged(this);
     }
 }
 
-void TraceWindow::applyDialogFilters()
+void TraceWindow::applyTabFilter(int tab)
 {
-    auto applyToModel = [&](TraceFilterModel *model)
+    const TabFilter &f = _tabFilter[tab];
+    auto applyToModel = [&f](TraceFilterModel *model)
     {
-        model->setShowTx(_filterShowTx);
-        model->setShowRx(_filterShowRx);
-        model->setHiddenMessageIds(_filterHiddenMessageIds);
-        model->setHiddenLinFrameIds(_filterHiddenLinFrameIds);
-        model->setHiddenInterfaces(_filterHiddenInterfaces);
+        model->setShowTx(f.showTx);
+        model->setShowRx(f.showRx);
+        model->setHiddenMessageIds(f.hiddenMessageIds);
+        model->setHiddenLinFrameIds(f.hiddenLinFrameIds);
+        model->setHiddenInterfaces(f.hiddenInterfaces);
         model->invalidate();
     };
 
-    for (int i = 0; i < Cat_Count; ++i)
-    {
-        applyToModel(_filterModels[i]);
-        if (_altFilterModels[i])
-            applyToModel(_altFilterModels[i]);
-    }
-    applyToModel(_aggMonitorFilterModel);
+    applyToModel(_filterModels[tab]);
+    if (_altFilterModels[tab]) { applyToModel(_altFilterModels[tab]); }
+    if (tab == Cat_Aggregated) { applyToModel(_aggMonitorFilterModel); }
+    if (tab > Cat_Aggregated) { applyExpand(tab); }
 }
-

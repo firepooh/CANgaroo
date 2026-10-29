@@ -46,6 +46,9 @@ public:
     [[nodiscard]] int pendingFrames() const;
     // Frames the trace dropped (size limit) before this view took them, since the pause began
     [[nodiscard]] qint64 framesSkippedWhilePaused() const { return m_skippedWhilePaused; }
+    // Erase (GUI_DESIGN.md T-4, T-5): empties this view only. The trace and the other
+    // views keep their frames; row numbers, Δt and change highlights start again.
+    void erase();
 
 private slots:
     void onTraceDirty();
@@ -65,6 +68,7 @@ private:
     Category m_category;
     ProtocolManager m_protocolManager;
     int m_lastProcessedIndex = -1;
+    int m_firstIndex = 0;          // first trace index after erase(); rebuilds start here
     bool m_paused = false;
     qint64 m_skippedWhilePaused = 0;
     uint32_t m_globalIndexCounter = 1;

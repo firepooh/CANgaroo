@@ -133,6 +133,12 @@ MonitorTable::MonitorTable(MonitorBuffer *buffer, QWidget *parent)
 
     verticalScrollBar()->setSingleStep(1);
     horizontalScrollBar()->setSingleStep(20);
+    // Scroll bar arrows, page clicks and dragging; the wheel is caught in viewportEvent
+    connect(verticalScrollBar(), &QAbstractSlider::actionTriggered, this, [this](int)
+    {
+        QScrollBar *bar = verticalScrollBar();
+        setFollowByUser(bar->sliderPosition() >= bar->maximum());
+    });
 
     connect(_header, &QHeaderView::sectionResized, this, [this]()
     {
@@ -309,15 +315,20 @@ void MonitorTable::onBufferChanged(int removedFrontLines)
     }
 
     QScrollBar *bar = verticalScrollBar();
-    const bool atBottom = bar->value() >= bar->maximum();
     const int value = bar->value();
 
     updateScrollBars();
 
-    if (_buffer->mode() == MonitorBuffer::Mode::Scroll) {
-        // Follow new frames at the bottom; elsewhere keep the same lines on screen
-        bar->setValue(atBottom ? bar->maximum() : std::max(0, value - removedFrontLines));
+    const bool newEntries = _buffer->entryCount() > _followedEntries || _buffer->mode() == MonitorBuffer::Mode::Scroll;
+    if (_follow && newEntries) {
+        // Follow: new rows at the bottom. In Fixed mode only a new ID counts, so opening
+        // a row or a new value does not move the view.
+        bar->setValue(bar->maximum());
+    } else if (_buffer->mode() == MonitorBuffer::Mode::Scroll) {
+        // Keep the same lines on screen while old ones are trimmed from the front
+        bar->setValue(std::max(0, value - removedFrontLines));
     }
+    _followedEntries = _buffer->entryCount();
     if (isVisible()) { viewport()->update(); }
 }
 
@@ -335,7 +346,7 @@ void MonitorTable::showEvent(QShowEvent *event)
     QSet<const MonitorBuffer::Entry *> ignored;
     _buffer->takeChanges(ignored);
     updateScrollBars();
-    if (_buffer->mode() == MonitorBuffer::Mode::Scroll) { verticalScrollBar()->setValue(verticalScrollBar()->maximum()); }
+    if (_follow) { verticalScrollBar()->setValue(verticalScrollBar()->maximum()); }
     viewport()->update();
 }
 
@@ -720,6 +731,38 @@ void MonitorTable::selectEntry(int entryIndex, bool center)
     viewport()->update();
 }
 
+void MonitorTable::setFollow(bool on)
+{
+    _follow = on;
+    if (on) { verticalScrollBar()->setValue(verticalScrollBar()->maximum()); }
+}
+
+void MonitorTable::setFollowByUser(bool on)
+{
+    if (on == _follow) { return; }
+    _follow = on;
+    emit followChanged(on);
+}
+
+void MonitorTable::followFromPosition()
+{
+    QScrollBar *bar = verticalScrollBar();
+    setFollowByUser(bar->value() >= bar->maximum());
+}
+
+int MonitorTable::selectedEntry() const
+{
+    return _hasSelection ? _buffer->indexOfId(_selectedId) : -1;
+}
+
+void MonitorTable::showFindResult(int entryIndex, bool open)
+{
+    if (entryIndex < 0 || entryIndex >= _buffer->entryCount()) { return; }
+    if (open && !_buffer->entry(entryIndex).expanded) { _buffer->toggleExpanded(entryIndex); }
+    setFollowByUser(false);
+    selectEntry(entryIndex, true);
+}
+
 bool MonitorTable::find(int column, const QString &text, bool forward)
 {
     const int current = _hasSelection ? _buffer->indexOfId(_selectedId) : -1;
@@ -742,6 +785,7 @@ void MonitorTable::mousePressEvent(QMouseEvent *event)
 
     _hasSelection = true;
     _selectedId = _buffer->entryId(index);
+    setFollowByUser(false);     // T-14: picking a row stops following
 
     const int x = event->position().toPoint().x();
     const int firstX = firstVisibleColumnX();
@@ -771,9 +815,11 @@ void MonitorTable::keyPressEvent(QKeyEvent *event)
 
     switch (event->key()) {
         case Qt::Key_Up:
+            setFollowByUser(false);
             selectEntry(current < 0 ? 0 : std::max(0, current - 1), false);
             break;
         case Qt::Key_Down:
+            setFollowByUser(false);
             selectEntry(current < 0 ? 0 : std::min(_buffer->entryCount() - 1, current + 1), false);
             break;
         case Qt::Key_PageUp:
@@ -784,9 +830,11 @@ void MonitorTable::keyPressEvent(QKeyEvent *event)
             break;
         case Qt::Key_Home:
             bar->setValue(0);
+            followFromPosition();
             break;
         case Qt::Key_End:
             bar->setValue(bar->maximum());
+            followFromPosition();
             break;
         case Qt::Key_Left:
         case Qt::Key_Right:
@@ -805,6 +853,11 @@ void MonitorTable::keyPressEvent(QKeyEvent *event)
 
 bool MonitorTable::viewportEvent(QEvent *event)
 {
+    if (event->type() == QEvent::Wheel) {
+        const bool handled = QAbstractScrollArea::viewportEvent(event);
+        followFromPosition();
+        return handled;
+    }
     if (event->type() == QEvent::ToolTip) {
         auto *help = static_cast<QHelpEvent *>(event);
         const auto [index, sub] = _buffer->entryAtLine(lineAt(help->pos().y()));

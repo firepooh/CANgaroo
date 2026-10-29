@@ -440,6 +440,7 @@ void UnifiedTraceViewModel::beforeRemove(int count)
         m_skippedWhilePaused += -1 - m_lastProcessedIndex;
         m_lastProcessedIndex = -1;
     }
+    m_firstIndex = std::max(0, m_firstIndex - count);
 }
 
 void UnifiedTraceViewModel::afterRemove(int count)
@@ -459,6 +460,7 @@ void UnifiedTraceViewModel::afterClear()
     m_rootItem = std::make_shared<UnifiedTraceItem>(BusMessage());
     m_protocolManager.reset();
     m_lastProcessedIndex = -1;
+    m_firstIndex = 0;
     m_skippedWhilePaused = 0;
     m_globalIndexCounter = 1;
     m_firstTimestamp = 0;
@@ -479,7 +481,7 @@ void UnifiedTraceViewModel::onSetupChanged()
     m_rootItem = std::make_shared<UnifiedTraceItem>(BusMessage());
     m_protocolManager.reset();
     applyProtocolConfig();
-    m_lastProcessedIndex = -1;
+    m_lastProcessedIndex = m_firstIndex - 1;   // frames before an Erase stay away
     m_globalIndexCounter = 1;
     m_firstTimestamp = 0;
     m_previousRowTimestamp = 0;
@@ -494,6 +496,27 @@ void UnifiedTraceViewModel::onSetupChanged()
     // We bypass beginInsertRows by being inside beginResetModel
     processNewMessages();
 
+    endResetModel();
+}
+
+void UnifiedTraceViewModel::erase()
+{
+    m_processTimer.stop();
+    beginResetModel();
+    m_rootItem = std::make_shared<UnifiedTraceItem>(BusMessage());
+    m_protocolManager.reset();      // a half-received message would continue into the new rows
+    m_lastProcessedIndex = static_cast<int>(backend()->getTrace()->size()) - 1;
+    m_firstIndex = m_lastProcessedIndex + 1;
+    m_skippedWhilePaused = 0;
+    m_globalIndexCounter = 1;
+    m_firstTimestamp = 0;
+    m_previousRowTimestamp = 0;
+    m_j1939AggregatedMap.clear();
+    m_udsAggregatedMap.clear();
+    m_xcpAggregatedMap.clear();
+    m_obdAggregatedMap.clear();
+    m_prevTimestampByKey.clear();
+    m_prevMessageByKey.clear();
     endResetModel();
 }
 
